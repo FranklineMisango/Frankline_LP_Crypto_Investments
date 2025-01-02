@@ -1,7 +1,6 @@
 # Frank-Co LP Crypto Investments
 
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)
-![REST](https://https://worldvectorlogo.com/logo/binance)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Contributions](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)
 
