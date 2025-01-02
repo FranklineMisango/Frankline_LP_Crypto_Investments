@@ -33,6 +33,24 @@ def get_stock_data(ticker, start, end):
 
 # Define the function for SMA Trading Strategy
 def sma_trading_strategy(df, short_sma, long_sma):
+    '''
+    The content below is AI-gen : 
+
+    The short and long Simple Moving Averages (SMAs) are used to identify trends and potential buy/sell signals in a trading strategy. Here are the key differences:
+
+1. **Calculation Period**:
+   - **Short SMA**: Calculated over a shorter period (e.g., 5, 10, or 20 days). It is more sensitive to recent price changes and reacts faster to price movements.
+   - **Long SMA**: Calculated over a longer period (e.g., 50, 100, or 200 days). It is less sensitive to recent price changes and provides a smoother view of the overall trend.
+
+2. **Sensitivity to Price Changes**:
+   - **Short SMA**: More responsive to recent price changes, making it useful for identifying short-term trends and potential entry/exit points.
+   - **Long SMA**: Less responsive to recent price changes, making it useful for identifying long-term trends and reducing the impact of short-term volatility.
+
+3. **Usage in Trading Strategies**:
+   - **Short SMA**: Often used to generate buy signals when it crosses above the long SMA (indicating a potential upward trend).
+   - **Long SMA**: Often used to generate sell signals when the short SMA crosses below it (indicating a potential downward trend).
+
+    '''
     df[f"SMA_{short_sma}"] = df['Close'].rolling(window=short_sma).mean()
     df[f"SMA_{long_sma}"] = df['Close'].rolling(window=long_sma).mean()
 
@@ -62,7 +80,7 @@ def sma_trading_strategy(df, short_sma, long_sma):
 # Main script
 print("SMA Trading Strategy Visualization and ccxt backtest")
 stock = input("Enter a ticker symbol : ")
-start = dt(2020, 1, 1)
+start = dt(2024, 11, 1)
 end = dt.now()
 
 # Convert datetime objects to strings
