@@ -28,6 +28,9 @@ def sma_trading_strategy(df, short_sma, long_sma):
 
     position = 0
     percent_change = []
+    buy_signals = []
+    sell_signals = []
+
     for i in df.index:
         close = df['Close'][i]
         SMA_short = df[f"SMA_{short_sma}"][i]
@@ -35,24 +38,27 @@ def sma_trading_strategy(df, short_sma, long_sma):
 
         if SMA_short > SMA_long and position == 0:
             buyP, position = close, 1
+            buy_signals.append((i, buyP))
             print("Buy at the price:", buyP)
         elif SMA_short < SMA_long and position == 1:
             sellP, position = close, 0
+            sell_signals.append((i, sellP))
             print("Sell at the price:", sellP)
             percent_change.append((sellP / buyP - 1) * 100)
 
     if position == 1:
         position = 0
         sellP = df['Close'].iloc[-1]
+        sell_signals.append((df.index[-1], sellP))
         print("Sell at the price:", sellP)
         percent_change.append((sellP / buyP - 1) * 100)
 
-    return percent_change
+    return percent_change, buy_signals, sell_signals
 
 # Main script
 print("SMA Trading Strategy Visualization and ccxt backtest")
 stock = input("Enter a ticker symbol (e.g., BTC/USDT): ")
-start = dt(2024, 11, 1)
+start = dt(2024, 1, 1)
 end = dt.now()
 
 # Convert datetime objects to strings
@@ -68,7 +74,7 @@ df = get_stock_data(stock, start_str, end_str)
 # Print the columns of the DataFrame to verify
 print(df.columns)
 
-percent_change = sma_trading_strategy(df, short_sma, long_sma)
+percent_change, buy_signals, sell_signals = sma_trading_strategy(df, short_sma, long_sma)
 
 # Calculate strategy statistics
 gains = 0
@@ -91,6 +97,16 @@ fig = go.Figure()
 fig.add_trace(go.Scatter(x=df.index, y=df[f"SMA_{short_sma}"], mode='lines', name=f"SMA_{short_sma}"))
 fig.add_trace(go.Scatter(x=df.index, y=df[f"SMA_{long_sma}"], mode='lines', name=f"SMA_{long_sma}"))
 fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name="Close", line=dict(color='green')))
+
+# Add buy and sell signals to the plot
+buy_x = [signal[0] for signal in buy_signals]
+buy_y = [signal[1] for signal in buy_signals]
+sell_x = [signal[0] for signal in sell_signals]
+sell_y = [signal[1] for signal in sell_signals]
+
+fig.add_trace(go.Scatter(x=buy_x, y=buy_y, mode='markers', name='Buy Signal', marker=dict(color='blue', symbol='triangle-up', size=10)))
+fig.add_trace(go.Scatter(x=sell_x, y=sell_y, mode='markers', name='Sell Signal', marker=dict(color='red', symbol='triangle-down', size=10)))
+
 fig.update_layout(title=f"SMA Trading Strategy for {stock.upper()}", xaxis_title="Date", yaxis_title="Price", template='plotly_dark')
 fig.show()
 
