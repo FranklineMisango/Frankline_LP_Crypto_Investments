@@ -7,6 +7,10 @@ from dotenv import load_dotenv
 import plotly.graph_objects as go
 import matplotlib.dates as mdates
 
+
+#Attempting to use CCXT backtesting
+from lumibot.backtesting import CcxtBacktesting
+
 # Get API keys from environment variables
 api_key = os.getenv('Binance_API_KEY')
 api_secret = os.getenv('Binance_secret_KEY')
@@ -52,7 +56,7 @@ def ema_strategy(start_date, end_date, ticker):
     # Plotting Moving Average using Plotly
     trace_adj_close = go.Scatter(x=df.index, y=df["Close"], mode='lines', name='Close')
     trace_ema = go.Scatter(x=df.index, y=df["EMA"], mode='lines', name='EMA')
-    layout_ma = go.Layout(title="Stock Closing Price of " + str(n) + "-Day Exponential Moving Average",
+    layout_ma = go.Layout(title="EMA v Closing Price of " + str(n) + "-Day Exponential Moving Average",
                         xaxis=dict(title="Date"), yaxis=dict(title="Price"))
     fig_ma = go.Figure(data=[trace_adj_close, trace_ema], layout=layout_ma)
     fig_ma.update_layout(template='plotly_dark')
@@ -73,7 +77,7 @@ def ema_strategy(start_date, end_date, ticker):
     trace_volume = go.Bar(x=dfc.index, y=dfc['Volume'], marker=dict(color=dfc['VolumePositive'].map({True: 'green', False: 'red'})),
                         name='Volume')
 
-    layout_candlestick = go.Layout(title="Stock " + str(symbol) + " Closing Price",
+    layout_candlestick = go.Layout(title="Coin " + str(symbol) + " Closing Price",
                                 xaxis=dict(title="Date", type='date', tickformat='%d-%m-%Y'),
                                 yaxis=dict(title="Price"),
                                 yaxis2=dict(title="Volume", overlaying='y', side='right'))
