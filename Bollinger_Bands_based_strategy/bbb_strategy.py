@@ -7,6 +7,7 @@ from pandas import DataFrame
 import ccxt
 
 class BollingerBandsBased(Strategy):
+    
     def initialize(self, asset:tuple[Asset,Asset] = None,
                 cash_at_risk:float=.25,window:int=21):
         if asset is None:
@@ -84,11 +85,10 @@ for market in markets.keys():
     print(market)
 
 # Allow the user to paste the market pair in form of A /B 
-
 base_symbol = input("Enter the base symbol for backtesting : ") 
 quote_symbol = input("Enter the quote symbol for run against base symbol  : ")
-start_date = datetime(2020,12,20)
-end_date = datetime(2024,12,20)
+start_date = datetime(2024,1,1)
+end_date = datetime(2024,12,31)
 asset = (Asset(symbol=base_symbol, asset_type="crypto"),
         Asset(symbol=quote_symbol, asset_type="crypto"))
 
