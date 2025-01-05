@@ -23,6 +23,7 @@ class ScalpingStrategy:
             since = data[-1][0] + 1
             ohlcv.extend(data)
         frame = pd.DataFrame(ohlcv, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume'])
+        print(frame)
         frame = frame.set_index('Time')
         frame.index = pd.to_datetime(frame.index, unit='ms')
         frame = frame.astype(float)
@@ -33,9 +34,10 @@ class ScalpingStrategy:
         return True
 
     def run_backtest(self, start_date, end_date):
+        print("starting backtest")
         self.data = self.get_minute_data(start_date, end_date)
         buy_price = self.data['Close'].iloc[0]
-        self.place_order('buy')
+        self.place_order('buy') # Check out the df shape from ccxt and binance as well
         
         for i in range(1, len(self.data)):
             current_price = self.data['Close'].iloc[i]
@@ -52,8 +54,8 @@ class ScalpingStrategy:
                 break
 
 if __name__ == "__main__":
-    symbol = 'BTC/USDT'
-    quantity = 0.001  # Adjust the quantity as needed
+    symbol = 'XLM/USDT'
+    quantity = 100000  # Adjust the quantity as needed
     start_date = datetime(2025, 1, 1)
     end_date = datetime(2025, 1, 2)
     strategy = ScalpingStrategy(symbol, quantity)
