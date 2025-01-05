@@ -11,6 +11,7 @@ class ScalpingStrategy:
         self.exchange = ccxt.binance()
         self.data = None
 
+    #Fetch data using binance connectors
     def get_minute_data(self, start_date, end_date, interval='1m'):
         since = self.exchange.parse8601(start_date.isoformat())
         end = self.exchange.parse8601(end_date.isoformat())
@@ -53,8 +54,7 @@ class ScalpingStrategy:
 if __name__ == "__main__":
     symbol = 'BTC/USDT'
     quantity = 0.001  # Adjust the quantity as needed
-    start_date = datetime(2024, 1, 1)
-    end_date = datetime(2024, 12, 31)
-    
+    start_date = datetime(2025, 1, 1)
+    end_date = datetime(2025, 1, 2)
     strategy = ScalpingStrategy(symbol, quantity)
     strategy.run_backtest(start_date, end_date)
