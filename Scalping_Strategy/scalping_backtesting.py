@@ -66,6 +66,7 @@ class ScalpingStrategy:
         self.data = self.get_minute_data(start_date, end_date)
         print("Data Fetched successfully")
         buy_price = None
+        portfolio_values = [self.portfolio_value]  # Track portfolio value over time
         
         for i in range(len(self.data)):
             current_price = self.data['Close'].iloc[i]
@@ -83,6 +84,7 @@ class ScalpingStrategy:
                 if profit >= self.profit_threshold:
                     self.place_order('sell', current_price, current_time)
                     self.portfolio_value = self.quantity * current_price
+                    portfolio_values.append(self.portfolio_value)  # Update portfolio value
                     print(f"Trade closed with profit: {profit * 100:.2f}%")
                     if self.max_profit_trade is None or profit > self.max_profit_trade['profit']:
                         self.max_profit_trade = {'profit': profit, 'time': current_time}
@@ -91,6 +93,7 @@ class ScalpingStrategy:
                 elif loss >= self.stop_loss_threshold:
                     self.place_order('sell', current_price, current_time)
                     self.portfolio_value = self.quantity * current_price
+                    portfolio_values.append(self.portfolio_value)  # Update portfolio value
                     print(f"Trade closed with loss: {loss * 100:.2f}%")
                     if self.max_loss_trade is None or loss > self.max_loss_trade['loss']:
                         self.max_loss_trade = {'loss': loss, 'time': current_time}
@@ -101,6 +104,7 @@ class ScalpingStrategy:
         if buy_price is not None:
             self.place_order('sell', self.data['Close'].iloc[-1], self.data.index[-1])
             self.portfolio_value = self.quantity * self.data['Close'].iloc[-1]
+            portfolio_values.append(self.portfolio_value)  # Update portfolio value
         
         print(f"Final portfolio value: ${self.portfolio_value:.2f}")
         print(f"Total P&L: ${(self.portfolio_value - self.initial_portfolio_value):.2f}")
@@ -110,12 +114,12 @@ class ScalpingStrategy:
         if self.max_loss_trade:
             print(f"Most loss-making trade: {self.max_loss_trade['loss'] * 100:.2f}% on {self.max_loss_trade['time']}")
         
-        self.plot_results()
+        self.plot_results(portfolio_values)
         end_time = time.time()
         elapsed_time = end_time - start_time
         print(f"Backtest completed in {elapsed_time:.2f} seconds")
 
-    def plot_pnl(self):
+    def plot_pnl(self, portfolio_values):
         pnl = [0]
         for trade in self.trades:
             if trade['side'] == 'sell':
@@ -125,11 +129,12 @@ class ScalpingStrategy:
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=[trade['time'] for trade in self.trades], y=pnl, mode='lines', name='PnL'))
-        fig.update_layout(title='Profit and Loss Over Time', xaxis_title='Time', yaxis_title='PnL')
+        fig.add_trace(go.Scatter(x=[trade['time'] for trade in self.trades], y=portfolio_values, mode='lines', name='Portfolio Value'))
+        fig.update_layout(title='Profit and Loss Over Time', xaxis_title='Time', yaxis_title='Value')
         pio.write_html(fig, file='pnl_over_time.html', auto_open=False)
 
-    def plot_results(self):
-        # Create the main figure with market data and trades
+    def plot_results(self, portfolio_values):
+    # Create the main figure with market data and trades
         fig = make_subplots(rows=1, cols=1, shared_xaxes=True, 
                             vertical_spacing=0.1, 
                             subplot_titles=('Market Data',),
@@ -207,11 +212,11 @@ class ScalpingStrategy:
         pio.write_html(trade_details, file='trade_details.html', auto_open=False)
 
         # Plot PnL over time
-        self.plot_pnl()
+        self.plot_pnl(portfolio_values)
 
 if __name__ == "__main__":
-    symbol = 'BTC/USDT'
-    start_date = datetime(2025, 1, 1)
-    end_date = datetime(2025, 1, 6)
+    symbol = 'SPX/USDT'
+    start_date = datetime(2024, 12, 11)
+    end_date = datetime(2025, 1, 12)
     strategy = ScalpingStrategy(symbol)
     strategy.run_backtest(start_date, end_date)
