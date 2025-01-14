@@ -12,7 +12,9 @@ load_dotenv()
 
 from datetime import datetime as dt
 from datetime import timedelta
-import ccxt
+
+
+# TODO - Work on dynamic holding and just dropping once it falls to 0.95% of the initial gain"
 class SwingHigh(Strategy):
     '''This strategy is based on the Swing High pattern. It buys when the last 3 candles are higher than the previous one and sells when the price drops by 0.5% or increases by 1.5%.'''
     '''The goal is to identify the stocks with high momentum and trade on the trend before selling back and make some money from an initial portfolio value.'''
