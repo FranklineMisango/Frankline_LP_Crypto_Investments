@@ -61,6 +61,7 @@ class ScalpingStrategy:
         return data
 
     def run_backtest(self, start_date, end_date):
+        start_time = time.time()
         print("Starting backtest")
         self.data = self.get_minute_data(start_date, end_date)
         print("Data Fetched successfully")
@@ -110,6 +111,9 @@ class ScalpingStrategy:
             print(f"Most loss-making trade: {self.max_loss_trade['loss'] * 100:.2f}% on {self.max_loss_trade['time']}")
         
         self.plot_results()
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"Backtest completed in {elapsed_time:.2f} seconds")
 
     def plot_pnl(self):
         pnl = [0]
@@ -206,8 +210,8 @@ class ScalpingStrategy:
         self.plot_pnl()
 
 if __name__ == "__main__":
-    symbol = 'USUAL/USDT'
-    start_date = datetime(2024, 1, 12)
+    symbol = 'BTC/USDT'
+    start_date = datetime(2025, 1, 1)
     end_date = datetime(2025, 1, 6)
     strategy = ScalpingStrategy(symbol)
     strategy.run_backtest(start_date, end_date)
