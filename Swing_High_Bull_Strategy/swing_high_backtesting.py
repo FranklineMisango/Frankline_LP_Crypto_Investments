@@ -14,17 +14,49 @@ from datetime import datetime as dt
 from datetime import timedelta
 
 
-# TODO - Work on dynamic holding and just dropping once it falls to 0.95% of the initial gain"
+# TODO Dynamic holding and just dropping once it falls to 0.95% of the initial gain"
+
+'''
+class SwingHighBacktesting:
+    def __init__(self):
+        self.initial_gain = None
+        self.holding = False
+
+    def buy_asset(self, price):
+        self.initial_gain = price
+        self.holding = True
+
+    def check_sell_condition(self, current_price):
+        if self.holding and current_price <= self.initial_gain * 0.95:
+            self.sell_asset(current_price)
+
+    def sell_asset(self, price):
+        self.holding = False
+        print(f"Sold asset at price: {price}")
+
+    def run_backtest(self, price_data):
+        for price in price_data:
+            if not self.holding:
+                self.buy_asset(price)
+            self.check_sell_condition(price)
+
+# Example usage
+price_data = [100, 105, 110, 108, 107, 104, 102, 100, 98, 95]
+backtester = SwingHighBacktesting()
+backtester.run_backtest(price_data)
+
+'''
 class SwingHigh(Strategy):
     '''This strategy is based on the Swing High pattern. It buys when the last 3 candles are higher than the previous one and sells when the price drops by 0.5% or increases by 1.5%.'''
     '''The goal is to identify the stocks with high momentum and trade on the trend before selling back and make some money from an initial portfolio value.'''
+   
     def __init__(self):
         self.exchange = ccxt.binance()
         self.initial_gains = {}
 
-    def fetch_the_volatile_cryptocurrencies(self):
+    def fetch_the_volatile_cryptocurrencies(self, hours=1):
         now = dt.now()
-        since = int((now - timedelta(hours=1)).timestamp() * 1000)
+        since = int((now - timedelta(hours=hours)).timestamp() * 1000)
         markets = self.exchange.load_markets()
         volatile_tickers = []
 
@@ -33,68 +65,32 @@ class SwingHigh(Strategy):
                 try:
                     data = self.get_minute_data(symbol, since)
                     if data:
-                        initial_price = data[0][1]  # Opening price 1 hour ago
+                        initial_price = data[0][1]  # Opening price hours ago
                         current_price = data[-1][4]  # Closing price now
                         gain = (current_price - initial_price) / initial_price * 100
+                        num_trades = len(data)
 
                         if gain >= 2:
-                            volatile_tickers.append(symbol)
+                            volatile_tickers.append({
+                                'symbol': symbol,
+                                'initial_price': initial_price,
+                                'current_price': current_price,
+                                '%change': gain,
+                                'num_trades': num_trades
+                            })
                             self.initial_gains[symbol] = gain
                         elif symbol in self.initial_gains and gain < self.initial_gains[symbol] * 0.95:
-                            volatile_tickers.remove(symbol)
+                            volatile_tickers = [ticker for ticker in volatile_tickers if ticker['symbol'] != symbol]
                             del self.initial_gains[symbol]
                 except ccxt.BaseError as e:
                     print(f"Error fetching data for {symbol}: {e}")
 
+        volatile_tickers.sort(key=lambda x: x['%change'], reverse=True)
         return volatile_tickers
 
     def get_minute_data(self, symbol, since):
         ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe='1m', since=since)
         return ohlcv
-    
-    def fetch_the_volatile_cryptocurrencies(self):
-        now = datetime.datetime.now()
-        since = int((now - datetime.timedelta(hours=1)).timestamp() * 1000)
-        markets = self.exchange.load_markets()
-        volatile_tickers = []
-
-        for symbol in markets:
-            if '/USDT' in symbol:
-                data = self.get_minute_data(symbol, since)
-                if data:
-                    initial_price = data[0][1]  # Opening price 1 hour ago
-                    current_price = data[-1][4]  # Closing price now
-                    gain = (current_price - initial_price) / initial_price * 100
-
-                    if gain >= 2:
-                        volatile_tickers.append(symbol)
-                    elif gain < 1.95:
-                        volatile_tickers.remove(symbol)
-
-        print(volatile_tickers)
-        return volatile_tickers
-    
-    def get_minute_data(self, start_date, end_date, interval='1m'):
-        since = self.exchange.parse8601(start_date.isoformat())
-        end = self.exchange.parse8601(end_date.isoformat())
-        data = []
-
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = []
-            chunk_size = (end - since) // 4
-            for i in range(4):
-                chunk_start = since + i * chunk_size
-                chunk_end = min(since + (i + 1) * chunk_size, end)
-                futures.append(executor.submit(self.fetch_data_chunk, chunk_start, chunk_end, interval))
-
-            for future in futures:
-                data.extend(future.result())
-
-        frame = pd.DataFrame(data, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume'])
-        frame = frame.set_index('Time')
-        frame.index = pd.to_datetime(frame.index, unit='ms')
-        frame = frame.astype(float)
-        return frame
     
     def calculate_crypto_positions():
         pass
