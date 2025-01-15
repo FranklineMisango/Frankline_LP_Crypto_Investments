@@ -1,7 +1,3 @@
-from datetime import datetime
-from lumibot.entities import Asset, Order
-from lumibot.strategies import Strategy
-from lumibot.backtesting import CcxtBacktesting
 from pandas import DataFrame
 import pandas as pd
 import ccxt
@@ -13,44 +9,12 @@ load_dotenv()
 from datetime import datetime as dt
 from datetime import timedelta
 
-
-# TODO Dynamic holding and just dropping once it falls to 0.95% of the initial gain"
-
-'''
-class SwingHighBacktesting:
-    def __init__(self):
-        self.initial_gain = None
-        self.holding = False
-
-    def buy_asset(self, price):
-        self.initial_gain = price
-        self.holding = True
-
-    def check_sell_condition(self, current_price):
-        if self.holding and current_price <= self.initial_gain * 0.95:
-            self.sell_asset(current_price)
-
-    def sell_asset(self, price):
-        self.holding = False
-        print(f"Sold asset at price: {price}")
-
-    def run_backtest(self, price_data):
-        for price in price_data:
-            if not self.holding:
-                self.buy_asset(price)
-            self.check_sell_condition(price)
-
-# Example usage
-price_data = [100, 105, 110, 108, 107, 104, 102, 100, 98, 95]
-backtester = SwingHighBacktesting()
-backtester.run_backtest(price_data)
-
-'''
-class SwingHigh(Strategy):
+class SwingHigh():
     '''This strategy is based on the Swing High pattern. It buys when the last 3 candles are higher than the previous one and sells when the price drops by 0.5% or increases by 1.5%.'''
     '''The goal is to identify the stocks with high momentum and trade on the trend before selling back and make some money from an initial portfolio value.'''
    
-    def __init__(self):
+    def __init__(self, minutes_before_closing=None):
+        super().__init__(minutes_before_closing)
         self.exchange = ccxt.binance()
         self.initial_gains = {}
 
@@ -92,11 +56,11 @@ class SwingHigh(Strategy):
         ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe='1m', since=since)
         return ohlcv
     
-    def calculate_crypto_positions():
-        pass
-    
-    def on_trading_iteration(self):
-        for symbol in self.symbols:
+    def run_backtest(self):
+        volatile_tickers = self.fetch_the_volatile_cryptocurrencies(hours=1)
+        symbols = [ticker['symbol'] for ticker in volatile_tickers]
+
+        for symbol in symbols:
             if symbol not in self.data:
                 self.data[symbol] = []
 
@@ -120,7 +84,7 @@ class SwingHigh(Strategy):
                     if self.order_numbers[symbol] == 1:
                         self.log_message(f"Entry price for {symbol}: {temp[-1]}")
                         entry_price = temp[-1]  # filled price
-                
+
                 if self.get_position(symbol) and self.data[symbol][-1] < entry_price * 0.995:
                     self.sell_all(symbol)
                     self.order_numbers[symbol] = 0
@@ -128,16 +92,6 @@ class SwingHigh(Strategy):
                     self.sell_all(symbol)
                     self.order_numbers[symbol] = 0
 
-    def before_market_closes(self):
-        for symbol in self.symbols:
-            self.sell_all(symbol)
-
-
-
-''''
 if __name__ == "__main__":
-    start_date = datetime(2024, 12, 11)
-    end_date = datetime(2025, 1, 12)
-    strategy = SwingHigh
-    strategy.run_backtest(start_date, end_date)
-'''
+    strategy = SwingHigh()
+    SwingHigh.run_backtest()
