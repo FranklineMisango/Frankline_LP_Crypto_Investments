@@ -4,19 +4,18 @@ load_dotenv()
 from datetime import datetime as dt
 from datetime import timedelta
 import csv
+import time
 
 class SwingHigh():
-    
-    '''This strategy is based on the Swing High pattern. It buys when the last 3 candles are higher than the previous one and sells when the price drops by 0.5% or increases by 1.5%.'''
-    '''The goal is to identify the stocks with high momentum and trade on the trend before selling back and make some money from an initial portfolio value.'''
-   
     def __init__(self):
         self.exchange = ccxt.binance()
         self.initial_gains = {}
-        self.data = {}  # Dictionary to store last price data for each symbol
-        self.order_numbers = {}  # Dictionary to store order numbers for each symbol
-        self.datashares_per_ticker = {}  # Dictionary to specify the number of shares per ticker
-        self.positions = {}  # Dictionary to track positions
+        self.data = {}
+        self.order_numbers = {}
+        self.shares_per_ticker = {}
+        self.positions = {}
+        self.portfolio_value = 10000  # Initial portfolio value
+        self.fees = 0.001  # Binance trading fee (0.1%)
 
     def fetch_the_volatile_cryptocurrencies(self, hours=1):
         now = dt.now()
@@ -50,15 +49,16 @@ class SwingHigh():
                     print(f"Error fetching data for {symbol}: {e}")
 
         volatile_tickers.sort(key=lambda x: x['%change'], reverse=True)
+        with open('volatile_tickers.csv', 'w') as f:
+            writer = csv.writer(f)
+            writer.writerow(['symbol', 'initial_price', 'current_price', '%change', 'num_trades'])
+            for ticker in volatile_tickers:
+                writer.writerow([ticker['symbol'], ticker['initial_price'], ticker['current_price'], ticker['%change'], ticker['num_trades']])
         return volatile_tickers
 
     def get_minute_data(self, symbol, since):
         ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe='1m', since=since)
         return ohlcv
-    
-    def get_last_price(self, symbol):
-        ticker = self.exchange.fetch_ticker(symbol)
-        return ticker['last']
 
     def log_message(self, message):
         print(message)
@@ -69,39 +69,64 @@ class SwingHigh():
     def get_position(self, symbol):
         return self.positions.get(symbol, False)
 
-    def sell_all(self, symbol):
+    def get_last_price(self, symbol):
+        return self.exchange.fetch_ticker(symbol)['last']
+    
+    def sell_all(self, symbol, entry_price):
+        current_price = self.get_last_price(symbol)
         if self.get_position(symbol):
-            self.log_message(f"Selling all for {symbol} at {self.get_last_price(symbol)}")
-            self.positions[symbol] = False
+            if current_price < entry_price * 0.995 or current_price >= entry_price * 1.015:
+                shares = self.shares_per_ticker[symbol]
+                sale_value = shares * current_price
+                sale_value -= sale_value * self.fees  # Subtract fees
+                self.portfolio_value += sale_value
+                self.log_message(f"Selling all for {symbol} at {current_price}")
+                self.positions[symbol] = False
 
     def run_backtest(self):
-        self.symbols = [ticker['symbol'] for ticker in self.fetch_the_volatile_cryptocurrencies(hours=1)]
-        self.shares_per_ticker = {symbol: 1 for symbol in self.symbols}
+        volatile_tickers = self.fetch_the_volatile_cryptocurrencies(hours=1)
+        self.symbols = [ticker['symbol'] for ticker in volatile_tickers]
+        
+        # Allocate 30% to the highest volatility ticker and 70% to the rest
+        if volatile_tickers:
+            highest_volatility_ticker = volatile_tickers[0]
+            highest_volatility_allocation = self.portfolio_value * 0.3
+            rest_allocation = self.portfolio_value * 0.7 / (len(volatile_tickers) - 1) if len(volatile_tickers) > 1 else 0
 
+        for ticker in volatile_tickers:
+            symbol = ticker['symbol']
+            initial_price_trading = ticker['initial_price']
+            allocation = highest_volatility_allocation if symbol == highest_volatility_ticker['symbol'] else rest_allocation
+            shares = allocation / initial_price_trading
+            self.shares_per_ticker[symbol] = shares
+            self.positions[symbol] = True
+            self.data[symbol] = []  # Initialize the data list for the symbol
+            self.log_message(f"Bought {shares} coins of {symbol} at {initial_price_trading}")
+
+        # Monitor and sell based on conditions
+        for _ in range(60):  # Simulate for 60 minutes
+            for symbol in self.symbols:
+                if self.get_position(symbol):
+                    current_price = self.get_last_price(symbol)
+                    entry_price = self.data[symbol][0] if symbol in self.data and self.data[symbol] else current_price
+                    self.data[symbol].append(current_price)
+                    if current_price < entry_price * 0.995 or current_price >= entry_price * 1.015:
+                        self.sell_all(symbol, entry_price)
+            time.sleep(60)  # Wait for 1 minute
+
+        # Sell everything at the end of the backtest
         for symbol in self.symbols:
-            if symbol not in self.data:
-                self.data[symbol] = []
+            if self.get_position(symbol):
+                self.sell_all(symbol, self.data[symbol][0])
 
-            entry_price = self.get_last_price(symbol)
-            self.log_message(f"Position for {symbol}: {self.get_position(symbol)}")
-            self.data[symbol].append(entry_price)
-
-            if len(self.data[symbol]) > 3:
-                temp = self.data[symbol][-3:]
-                if temp[-1] > temp[1] > temp[0]:
-                    self.log_message(f"Last 3 prints for {symbol}: {temp}")
-                    self.positions[symbol] = True
-                    self.log_message(f"Entry price for {symbol}: {temp[-1]}")
-                    entry_price = temp[-1]  # filled price
-                if self.get_position(symbol) and self.data[symbol][-1] < entry_price * 0.995:
-                    self.sell_all(symbol)
-                elif self.get_position(symbol) and self.data[symbol][-1] >= entry_price * 1.015:
-                    self.sell_all(symbol)
-
-    def before_market_closes(self):
+        # Calculate final portfolio value
+        final_portfolio_value = 0
         for symbol in self.symbols:
-            self.sell_all(symbol)
+            if symbol in self.shares_per_ticker:
+                final_portfolio_value += self.shares_per_ticker[symbol] * self.get_last_price(symbol)
+        final_portfolio_value -= final_portfolio_value * self.fees  # Subtract fees
 
+        self.log_message(f"Final portfolio value: {final_portfolio_value}")
 if __name__ == "__main__":
     strategy = SwingHigh()
     strategy.run_backtest()
