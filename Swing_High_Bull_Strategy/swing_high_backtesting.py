@@ -1,22 +1,22 @@
-from pandas import DataFrame
-import pandas as pd
 import ccxt
-from concurrent.futures import ThreadPoolExecutor
-
 from dotenv import load_dotenv
 load_dotenv()
-
 from datetime import datetime as dt
 from datetime import timedelta
+import csv
 
 class SwingHigh():
+    
     '''This strategy is based on the Swing High pattern. It buys when the last 3 candles are higher than the previous one and sells when the price drops by 0.5% or increases by 1.5%.'''
     '''The goal is to identify the stocks with high momentum and trade on the trend before selling back and make some money from an initial portfolio value.'''
    
-    def __init__(self, minutes_before_closing=None):
-        super().__init__(minutes_before_closing)
+    def __init__(self):
         self.exchange = ccxt.binance()
         self.initial_gains = {}
+        self.data = {}  # Dictionary to store last price data for each symbol
+        self.order_numbers = {}  # Dictionary to store order numbers for each symbol
+        self.datashares_per_ticker = {}  # Dictionary to specify the number of shares per ticker
+        self.positions = {}  # Dictionary to track positions
 
     def fetch_the_volatile_cryptocurrencies(self, hours=1):
         now = dt.now()
@@ -56,42 +56,52 @@ class SwingHigh():
         ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe='1m', since=since)
         return ohlcv
     
-    def run_backtest(self):
-        volatile_tickers = self.fetch_the_volatile_cryptocurrencies(hours=1)
-        symbols = [ticker['symbol'] for ticker in volatile_tickers]
+    def get_last_price(self, symbol):
+        ticker = self.exchange.fetch_ticker(symbol)
+        return ticker['last']
 
-        for symbol in symbols:
+    def log_message(self, message):
+        print(message)
+        with open('backtest_log.csv', 'a') as f:
+            writer = csv.writer(f)
+            writer.writerow([dt.now(), message])
+
+    def get_position(self, symbol):
+        return self.positions.get(symbol, False)
+
+    def sell_all(self, symbol):
+        if self.get_position(symbol):
+            self.log_message(f"Selling all for {symbol} at {self.get_last_price(symbol)}")
+            self.positions[symbol] = False
+
+    def run_backtest(self):
+        self.symbols = [ticker['symbol'] for ticker in self.fetch_the_volatile_cryptocurrencies(hours=1)]
+        self.shares_per_ticker = {symbol: 1 for symbol in self.symbols}
+
+        for symbol in self.symbols:
             if symbol not in self.data:
                 self.data[symbol] = []
 
             entry_price = self.get_last_price(symbol)
-            if entry_price is None:
-                self.log_message(f"No price data for {symbol}, skipping.")
-                continue
-
             self.log_message(f"Position for {symbol}: {self.get_position(symbol)}")
             self.data[symbol].append(entry_price)
 
             if len(self.data[symbol]) > 3:
                 temp = self.data[symbol][-3:]
-                if None not in temp and temp[-1] > temp[1] > temp[0]:
+                if temp[-1] > temp[1] > temp[0]:
                     self.log_message(f"Last 3 prints for {symbol}: {temp}")
-                    order = self.create_order(symbol, quantity=self.shares_per_ticker[symbol], side="buy")
-                    self.submit_order(order)
-                    if symbol not in self.order_numbers:
-                        self.order_numbers[symbol] = 0
-                    self.order_numbers[symbol] += 1
-                    if self.order_numbers[symbol] == 1:
-                        self.log_message(f"Entry price for {symbol}: {temp[-1]}")
-                        entry_price = temp[-1]  # filled price
-
+                    self.positions[symbol] = True
+                    self.log_message(f"Entry price for {symbol}: {temp[-1]}")
+                    entry_price = temp[-1]  # filled price
                 if self.get_position(symbol) and self.data[symbol][-1] < entry_price * 0.995:
                     self.sell_all(symbol)
-                    self.order_numbers[symbol] = 0
                 elif self.get_position(symbol) and self.data[symbol][-1] >= entry_price * 1.015:
                     self.sell_all(symbol)
-                    self.order_numbers[symbol] = 0
+
+    def before_market_closes(self):
+        for symbol in self.symbols:
+            self.sell_all(symbol)
 
 if __name__ == "__main__":
     strategy = SwingHigh()
-    SwingHigh.run_backtest()
+    strategy.run_backtest()
