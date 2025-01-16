@@ -5,7 +5,7 @@ from datetime import datetime as dt
 from datetime import timedelta
 import csv
 import time
-
+import pytz
 class SwingHigh():
     def __init__(self):
         self.exchange = ccxt.binance()
@@ -17,8 +17,10 @@ class SwingHigh():
         self.portfolio_value = 10000  # Initial portfolio value
         self.fees = 0.001  # Binance trading fee (0.1%)
 
-    def fetch_the_volatile_cryptocurrencies(self, hours=1):
-        now = dt.now()
+    def fetch_the_volatile_cryptocurrencies(self, hours):
+        hkt = pytz.timezone('Asia/Hong_Kong')
+        now = dt.now(hkt)
+        print(f"Fetching coin prices from binance from {hours} hours ago to now which is {now} HKT")
         since = int((now - timedelta(hours=hours)).timestamp() * 1000)
         markets = self.exchange.load_markets()
         volatile_tickers = []
@@ -75,12 +77,15 @@ class SwingHigh():
     def sell_all(self, symbol, entry_price):
         current_price = self.get_last_price(symbol)
         if self.get_position(symbol):
-            if current_price < entry_price * 0.995 or current_price >= entry_price * 1.015:
+            # TODO - Redefine the logic for selling and work on whether should follow volatilty or the backtest sale logic
+            dropping_price =  entry_price * 0.995
+            higher_than_earlier_price = entry_price * 1.015
+            if current_price < dropping_price or current_price >= higher_than_earlier_price:
                 shares = self.shares_per_ticker[symbol]
                 sale_value = shares * current_price
                 sale_value -= sale_value * self.fees  # Subtract fees
                 self.portfolio_value += sale_value
-                self.log_message(f"Selling all for {symbol} at {current_price}")
+                self.log_message(f"Selling all for {symbol} at {current_price} ")
                 self.positions[symbol] = False
 
     def run_backtest(self):
@@ -102,9 +107,8 @@ class SwingHigh():
             self.positions[symbol] = True
             self.data[symbol] = []  # Initialize the data list for the symbol
             self.log_message(f"Bought {shares} coins of {symbol} at {initial_price_trading}")
-
-        # Monitor and sell based on conditions
-        for _ in range(60):  # Simulate for 60 minutes
+        
+        for _ in range(60):  
             for symbol in self.symbols:
                 if self.get_position(symbol):
                     current_price = self.get_last_price(symbol)
@@ -112,7 +116,7 @@ class SwingHigh():
                     self.data[symbol].append(current_price)
                     if current_price < entry_price * 0.995 or current_price >= entry_price * 1.015:
                         self.sell_all(symbol, entry_price)
-            time.sleep(60)  # Wait for 1 minute
+            #time.sleep(60)  # Wait for 1 minute
 
         # Sell everything at the end of the backtest
         for symbol in self.symbols:
