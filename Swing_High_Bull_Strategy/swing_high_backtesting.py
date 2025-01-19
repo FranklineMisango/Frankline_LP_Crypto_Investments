@@ -6,6 +6,9 @@ from datetime import timedelta
 import csv
 import time
 import pytz
+
+#TODO - Find a fix for : Error fetching data for BTCST/USDT:USDT: binance {"code":-1122,"msg":"Invalid symbol status."}
+
 class SwingHigh():
     def __init__(self):
         self.exchange = ccxt.binance()
@@ -15,12 +18,12 @@ class SwingHigh():
         self.shares_per_ticker = {}
         self.positions = {}
         self.portfolio_value = 10000  # Initial portfolio value
-        self.fees = 0.001  # Binance trading fee (0.1%)
+        self.fees = 0.006  # Binance trading fee (0.1%)
 
     def fetch_the_volatile_cryptocurrencies(self, hours):
         hkt = pytz.timezone('Asia/Hong_Kong')
         now = dt.now(hkt)
-        print(f"Fetching coin prices from binance from {hours} hours ago to now which is {now} HKT")
+        print(f"Fetching coin prices from binance from {hours} hour(s) ago to now which is {now} HKT")
         since = int((now - timedelta(hours=hours)).timestamp() * 1000)
         markets = self.exchange.load_markets()
         volatile_tickers = []
@@ -33,7 +36,7 @@ class SwingHigh():
                         initial_price = data[0][1]  # Opening price hours ago
                         current_price = data[-1][4]  # Closing price now
                         gain = (current_price - initial_price) / initial_price * 100
-                        num_trades = len(data)
+                        num_trades = self.exchange.fetch_trades(symbol, since=since)
 
                         if gain >= 2:
                             volatile_tickers.append({
@@ -89,7 +92,7 @@ class SwingHigh():
                 self.positions[symbol] = False
 
     def run_backtest(self):
-        volatile_tickers = self.fetch_the_volatile_cryptocurrencies(hours=1)
+        volatile_tickers = self.fetch_the_volatile_cryptocurrencies(hours=24)
         self.symbols = [ticker['symbol'] for ticker in volatile_tickers]
         
         # Allocate 30% to the highest volatility ticker and 70% to the rest
