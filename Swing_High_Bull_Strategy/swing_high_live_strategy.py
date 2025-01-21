@@ -8,16 +8,12 @@ import pytz
 from binance.client import Client
 import pandas as pd
 import os
+import sys
 from binance.spot import Spot
 
 client = Spot()
-client = Spot(api_key=os.getenv('Binance_API_KEY'), api_secret=os.getenv('Binance_secret_KEY'))
-
-api_key = os.getenv('Binance_API_KEY')
-api_secret = os.getenv('Binance_secret_KEY')
-
-# Initialize Binance client
-fetcher_client = Client(api_key, api_secret)
+client = Spot(api_key=os.getenv('Binance_API_KEY'), api_secret=os.getenv('Binance_secret_KEY')) # Main Trader API
+fetcher_client = Client(os.getenv('Binance_Fetcher_api'), os.getenv('Binance_Fetcher_secret')) #Main Data Fetcher API
 
 class SwingHigh():
 
@@ -99,14 +95,14 @@ class SwingHigh():
     # customize for live ordering and selling 
     def buy_order(self, symbol, shares):
             try:
-                order = client.order_market_buy(symbol=symbol, quantity=shares)
+                order = client.new_order(symbol=symbol, side='BUY', type='MARKET', quantity=shares)
                 self.order_numbers[symbol] = order['orderId']
                 self.log_message(f"Buying {shares} coins of {symbol} at market price")
             except Exception as e:
                 self.log_message(f"Error buying {shares} coins of {symbol}: {e}")
        
     def log_message(self, message): 
-        #TODO - Send to my E-mail every 1 hour the live running actions and the portfolio value
+        #TODO - Send to my E-mail the CSV every 1 hour the live running actions and the portfolio value
         print(message)
         with open('Live_Running_Actions.csv', 'a') as f:
             writer = csv.writer(f)
@@ -118,30 +114,31 @@ class SwingHigh():
 
     def get_last_price(self, symbol):
         try:
-            ticker = client.get_symbol_ticker(symbol=symbol)
+            ticker = fetcher_client.get_symbol_ticker(symbol=symbol)
             return float(ticker['price'])
         except Exception as e:
             self.log_message(f"Error fetching last price for {symbol}: {e}")
             return None
     
     def sell_all(self, symbol, entry_price):
-        current_price = self.get_last_price(symbol)
-        if current_price is None:
-            return
-        if self.get_position(symbol):
-            dropping_price = entry_price * 0.995
-            higher_than_earlier_price = entry_price * 1.015
-            if current_price < dropping_price or current_price >= higher_than_earlier_price:
-                shares = self.shares_per_ticker[symbol]
-                try:
-                    order = client.order_market_sell(symbol=symbol, quantity=shares)
-                    sale_value = shares * current_price
-                    sale_value -= sale_value * self.fees  # Subtract fees
-                    self.portfolio_value += sale_value
-                    self.log_message(f"Selling all for {symbol} at {current_price}")
-                    self.positions[symbol] = False
-                except Exception as e:
-                    self.log_message(f"Error selling {shares} coins of {symbol}: {e}")
+            current_price = self.get_last_price(symbol)
+            if current_price is None:
+                return
+            if self.get_position(symbol):
+                dropping_price = entry_price * 0.995
+                higher_than_earlier_price = entry_price * 1.015
+                if current_price < dropping_price or current_price >= higher_than_earlier_price:
+                    shares = self.shares_per_ticker[symbol]
+                    try:
+                        # Ensure client is accessible
+                        order = client.new_order(symbol=symbol, side=self.client.SIDE_SELL, type=self.client.ORDER_TYPE_MARKET, quantity=shares)
+                        sale_value = shares * current_price
+                        sale_value -= sale_value * self.fees  # Subtract fees
+                        self.portfolio_value += sale_value
+                        self.log_message(f"Selling all for {symbol} at {current_price}")
+                        self.positions[symbol] = False
+                    except Exception as e:
+                        self.log_message(f"Error selling {shares} coins of {symbol}: {e}")
 
     def run_live_trading(self, duration_minutes):
         print("Running live trading...")
@@ -182,6 +179,7 @@ class SwingHigh():
         # Sell all positions after the duration
         for symbol in list(self.positions.keys()):
             self.sell_all(symbol, self.data[symbol][0]['initial_price'])
+            print(f"Sold all {symbol} coins")
 
         # Calculate final portfolio value
         final_portfolio_value = 0
@@ -190,6 +188,9 @@ class SwingHigh():
         final_portfolio_value -= final_portfolio_value * self.fees  # Subtract fees
 
         self.log_message(f"Final portfolio value: {final_portfolio_value}")
+        print(f"Final portfolio value: {final_portfolio_value}")
+        print(f"Closing live trading...")
+        sys.exit()
 
 if __name__ == "__main__":
     strategy = SwingHigh()
