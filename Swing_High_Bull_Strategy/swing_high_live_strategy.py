@@ -225,6 +225,7 @@ class SwingHigh():
                     shares_to_sell = min(shares, available_shares)
                     shares_to_sell = math.floor(shares_to_sell)  # Round down to the nearest whole number
                     if shares_to_sell <= 0:
+                        # No available shares to sell then stop trying to sell 
                         self.log_message(f"No available shares to sell for {symbol}")
                         return
 
@@ -238,9 +239,44 @@ class SwingHigh():
                     self.positions[symbol] = False
                 except Exception as e:
                     self.log_message(f"Error selling {shares} coins of {symbol}: {e}")
+    
+    def final_sell_everything_before_ending(self, symbol):
+        print(f"Selling all {symbol} coins before ending the live trading...")
+        current_price = self.get_last_price(symbol)
+        if current_price is None:
+            return
+        shares = self.shares_per_ticker.get(symbol, 0)
+        try:
+            # Fetch the actual balance from the exchange
+            account_info = client.account()
+            for item in account_info['balances']:
+                if item['asset'] == symbol[:-4]:
+                    available_shares = float(item['free'])
+                    break
+            else:
+                available_shares = 0
+
+            # Ensure the number of shares to sell does not exceed the available balance
+            shares_to_sell = min(shares, available_shares)
+            shares_to_sell = math.floor(shares_to_sell)  # Round down to the nearest whole number
+            if shares_to_sell <= 0:
+                self.log_message(f"No available shares to sell for {symbol}")
+                return
+
+            # Place the sell order
+            order = client.new_order(symbol=symbol, side='SELL', type='MARKET', quantity=shares_to_sell)
+            sale_value = shares_to_sell * current_price
+            sale_value -= sale_value * self.fees  # Subtract fees
+            self.portfolio_value += sale_value
+            self.available_funds += sale_value  # Update available funds
+            self.log_message(f"Selling {shares_to_sell} coins of {symbol} at {current_price}")
+            self.positions[symbol] = False
+            self.shares_per_ticker[symbol] = 0  # Reset the shares per ticker
+        except Exception as e:
+            self.log_message(f"Error selling {shares} coins of {symbol}: {e}")
 
     def run_live_trading(self, duration_minutes):
-        print("Running live trading...")
+        print("Starting Swing High live trading live strategy ...")
         account_info = client.account()['balances']
         for item in account_info:
             if item['asset'] == 'USDT':
@@ -283,10 +319,9 @@ class SwingHigh():
             print("Waiting for 1 minute before next check...")
             time.sleep(60)  # Wait for 1 minute before checking again
 
-        # Sell ALL positions after the duration
+        # Sell all positions before ending the live trading
         for symbol in list(self.positions.keys()):
-            self.sell_all(symbol, self.data[symbol][0]['initial_price'])
-            print(f"Sold all {symbol} coins")
+            self.final_sell_everything_before_ending(symbol)
 
         # Calculate final portfolio value
         final_portfolio_value = 0
@@ -296,7 +331,7 @@ class SwingHigh():
 
         self.log_message(f"Final portfolio value: {final_portfolio_value}")
         print(f"Final portfolio value: {final_portfolio_value}")
-        print(f"Closing live trading...")
+        print(f"Closing live trading at time {dt.now().hkt()}")
         sys.exit()
 
 if __name__ == "__main__":
