@@ -11,6 +11,8 @@ import os
 import sys
 from binance.spot import Spot
 import threading
+import math
+
 
 
 client = Spot()
@@ -67,7 +69,8 @@ class SwingHigh():
                         num_trades = data['Number of Trades'].sum()
                         volume = data['Volume'].sum()
 
-                        if gain >= 2:
+                        if gain >= 3:
+                            print(f"{symbol} gained {gain:.2f} % within the last 30 minutes")
                             volatile_tickers[symbol] = {
                                 'Crypto Symbol': symbol,
                                 'initial_price': initial_price,
@@ -83,7 +86,7 @@ class SwingHigh():
 
     def fetch_volatile_tickers_lively(self):
         while True:
-            print("Fetching volatile tickers for the last 30 minutes...")
+            print("Fetching volatile tickers for the last 30 mins that have gained atleast 3%...")
             volatile_tickers = self.fetch_volatile_tickers_for_last_30_minutes()
             
             with self.lock:
@@ -169,6 +172,7 @@ class SwingHigh():
                 for f in s['filters']:
                     if f['filterType'] == 'MIN_NOTIONAL':
                         return float(f['minNotional'])
+        
         return 10.0  # Default to 10.0 if not found
 
     def log_message(self, message): 
@@ -181,6 +185,14 @@ class SwingHigh():
     def get_position(self, symbol):
         return self.positions.get(symbol, False)
 
+    def get_position(self, symbol):
+        account_info = client.account()
+        account_info = account_info['balances']
+        for item in account_info:
+            if item['asset'] == symbol[:-4] and float(item['free']) > 0:
+                return True
+        return False
+
     def get_last_price(self, symbol):
         try:
             ticker = fetcher_client.get_symbol_ticker(symbol=symbol)
@@ -188,6 +200,7 @@ class SwingHigh():
         except Exception as e:
             self.log_message(f"Error fetching last price for {symbol}: {e}")
             return None
+
 
     def sell_all(self, symbol, entry_price):
         current_price = self.get_last_price(symbol)
@@ -199,13 +212,29 @@ class SwingHigh():
             if current_price < dropping_price or current_price >= higher_than_earlier_price:
                 shares = self.shares_per_ticker[symbol]
                 try:
+                    # Fetch the actual balance from the exchange
+                    account_info = client.account()
+                    for item in account_info['balances']:
+                        if item['asset'] == symbol[:-4]:
+                            available_shares = float(item['free'])
+                            break
+                    else:
+                        available_shares = 0
+
+                    # Ensure the number of shares to sell does not exceed the available balance
+                    shares_to_sell = min(shares, available_shares)
+                    shares_to_sell = math.floor(shares_to_sell)  # Round down to the nearest whole number
+                    if shares_to_sell <= 0:
+                        self.log_message(f"No available shares to sell for {symbol}")
+                        return
+
                     # Ensure client is accessible
-                    order = client.new_order(symbol=symbol, side='SELL', type='MARKET', quantity=shares)
-                    sale_value = shares * current_price
+                    order = client.new_order(symbol=symbol, side='SELL', type='MARKET', quantity=shares_to_sell)
+                    sale_value = shares_to_sell * current_price
                     sale_value -= sale_value * self.fees  # Subtract fees
                     self.portfolio_value += sale_value
                     self.available_funds += sale_value  # Update available funds
-                    self.log_message(f"Selling all for {symbol} at {current_price}")
+                    self.log_message(f"Selling {shares_to_sell} coins of {symbol} at {current_price}")
                     self.positions[symbol] = False
                 except Exception as e:
                     self.log_message(f"Error selling {shares} coins of {symbol}: {e}")
