@@ -27,6 +27,7 @@ class SwingHigh():
         self.positions = {}
         self.fees = 0.001  # Binance trading fee (0.1%)
         self.portfolio_value = 0
+        self.available_funds = 0
         self.volatile_tickers = {}
         self.lock = threading.Lock()
 
@@ -139,8 +140,15 @@ class SwingHigh():
                     self.log_message(f"Order value {shares * last_price} is still below the minimum notional value {min_notional} after adjustment")
                     return
             
+            # Check if the order value exceeds available funds
+            order_value = shares * last_price
+            if order_value > self.available_funds:
+                self.log_message(f"Insufficient funds to buy {shares} coins of {symbol}. Order value: {order_value}, Available funds: {self.available_funds}")
+                return
+            
             order = client.new_order(symbol=symbol, side='BUY', type='MARKET', quantity=shares)
             self.order_numbers[symbol] = order['orderId']
+            self.available_funds -= order_value  # Update available funds
             self.log_message(f"Buying {shares} coins of {symbol} at market price")
         except Exception as e:
             self.log_message(f"Error buying {shares} coins of {symbol}: {e}")
@@ -196,6 +204,7 @@ class SwingHigh():
                     sale_value = shares * current_price
                     sale_value -= sale_value * self.fees  # Subtract fees
                     self.portfolio_value += sale_value
+                    self.available_funds += sale_value  # Update available funds
                     self.log_message(f"Selling all for {symbol} at {current_price}")
                     self.positions[symbol] = False
                 except Exception as e:
@@ -207,6 +216,7 @@ class SwingHigh():
         for item in account_info:
             if item['asset'] == 'USDT':
                 self.portfolio_value = float(item['free'])
+                self.available_funds = self.portfolio_value  # Initialize available funds
                 print(f"Starting with a portfolio value of : {self.portfolio_value} USDT")
         
         # Start the thread for fetching volatile tickers
@@ -232,7 +242,7 @@ class SwingHigh():
                 symbol = ticker['Crypto Symbol']
                 initial_price_trading = ticker['initial_price']
                 if symbol not in self.positions or not self.positions[symbol]:
-                    allocation = self.portfolio_value / len(volatile_tickers)
+                    allocation = self.available_funds / len(volatile_tickers)
                     shares = self.calculate_max_shares(symbol, allocation)
                     if shares > 0:
                         self.shares_per_ticker[symbol] = shares
