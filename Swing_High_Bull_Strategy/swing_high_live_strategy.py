@@ -10,6 +10,8 @@ import pandas as pd
 import os
 import sys
 from binance.spot import Spot
+import threading
+
 
 client = Spot()
 client = Spot(api_key=os.getenv('Binance_API_KEY'), api_secret=os.getenv('Binance_secret_KEY')) # Main Trader API
@@ -18,15 +20,17 @@ fetcher_client = Client(os.getenv('Binance_Fetcher_api'), os.getenv('Binance_Fet
 class SwingHigh():
 
     def __init__(self):
-
         self.initial_gains = {}
         self.data = {}
         self.order_numbers = {}
         self.shares_per_ticker = {}
         self.positions = {}
         self.fees = 0.001  # Binance trading fee (0.1%)
+        self.portfolio_value = 0
+        self.volatile_tickers = {}
+        self.lock = threading.Lock()
 
-    def get_stock_data(self,ticker, since):
+    def get_stock_data(self, ticker, since):
         klines = fetcher_client.get_historical_klines(ticker, Client.KLINE_INTERVAL_5MINUTE, since)
         df = pd.DataFrame(klines, columns=['Open Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'Close Time', 'Quote Asset Volume', 'Number of Trades', 'Taker Buy Base Asset Volume', 'Taker Buy Quote Asset Volume', 'Ignore'])
         df['Open Time'] = pd.to_datetime(df['Open Time'], unit='ms')
@@ -42,7 +46,7 @@ class SwingHigh():
         df['Taker Buy Quote Asset Volume'] = df['Taker Buy Quote Asset Volume'].astype(float)
         df.set_index('Open Time', inplace=True)  # Set the index to 'Open Time'
         return df
-    
+
     def fetch_volatile_tickers_for_last_30_minutes(self):
         hkt = pytz.timezone('Asia/Hong_Kong')
         now = dt.now(hkt)
@@ -76,23 +80,45 @@ class SwingHigh():
 
         return volatile_tickers
 
-
-
     def fetch_volatile_tickers_lively(self):
-        print("Fetching volatile tickers for the last 30 minutes...")
-        volatile_tickers = self.fetch_volatile_tickers_for_last_30_minutes()
-        
-        with open('30_minutes_dynamic_updates_volatile_tickers.csv', 'w') as f:
-            writer = csv.writer(f)
-            writer.writerow(['Crypto Symbol', 'initial_price', 'current_price', 'Percentage Change (%)', 'num_trades', 'Volume'])
-            for ticker in volatile_tickers.values():
-                writer.writerow([ticker['Crypto Symbol'], ticker['initial_price'], ticker['current_price'], ticker['Percentage Change'], ticker['num_trades'], ticker['Volume ']])
-        
-        print("Updated volatile tickers list.")
-        return volatile_tickers
+        while True:
+            print("Fetching volatile tickers for the last 30 minutes...")
+            volatile_tickers = self.fetch_volatile_tickers_for_last_30_minutes()
+            
+            with self.lock:
+                self.volatile_tickers = volatile_tickers
+            
+            with open('30_minutes_dynamic_updates_volatile_tickers.csv', 'w') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Crypto Symbol', 'initial_price', 'current_price', 'Percentage Change (%)', 'num_trades', 'Volume'])
+                for ticker in volatile_tickers.values():
+                    writer.writerow([ticker['Crypto Symbol'], ticker['initial_price'], ticker['current_price'], ticker['Percentage Change'], ticker['num_trades'], ticker['Volume ']])
+            
+            print("Updated volatile tickers list.")
+            time.sleep(300)  # Wait for 5 minutes before fetching again
 
-    
-  
+    def calculate_max_shares(self, symbol, available_funds):
+        last_price = self.get_last_price(symbol)
+        min_notional = self.get_min_notional(symbol)
+        lot_size = self.get_lot_size(symbol)
+        
+        # Calculate the maximum shares that can be bought with the available funds
+        max_shares = available_funds / last_price
+        
+        # Adjust shares to meet the lot size requirement
+        max_shares = round(max_shares // lot_size * lot_size, 8)
+        
+        # Ensure the total value meets the minimum notional value
+        if max_shares * last_price < min_notional:
+            # Adjust shares to meet the minimum notional value
+            max_shares = round((min_notional / last_price) // lot_size * lot_size, 8)
+            # Add a small buffer to ensure the order value meets the minimum notional value
+            max_shares += lot_size
+            if max_shares * last_price < min_notional:
+                self.log_message(f"Order value {max_shares * last_price} is still below the minimum notional value {min_notional} after adjustment")
+                return 0
+        
+        return max_shares
 
     def buy_order(self, symbol, shares):
         try:
@@ -105,8 +131,13 @@ class SwingHigh():
             
             # Ensure the total value meets the minimum notional value
             if shares * last_price < min_notional:
-                self.log_message(f"Order value {shares * last_price} is below the minimum notional value {min_notional}")
-                return
+                # Adjust shares to meet the minimum notional value
+                shares = round((min_notional / last_price) // lot_size * lot_size, 8)
+                # Add a small buffer to ensure the order value meets the minimum notional value
+                shares += lot_size
+                if shares * last_price < min_notional:
+                    self.log_message(f"Order value {shares * last_price} is still below the minimum notional value {min_notional} after adjustment")
+                    return
             
             order = client.new_order(symbol=symbol, side='BUY', type='MARKET', quantity=shares)
             self.order_numbers[symbol] = order['orderId']
@@ -130,8 +161,8 @@ class SwingHigh():
                 for f in s['filters']:
                     if f['filterType'] == 'MIN_NOTIONAL':
                         return float(f['minNotional'])
-        return 10.0  # Default to 10.0 if not foundound
-       
+        return 10.0  # Default to 10.0 if not found
+
     def log_message(self, message): 
         #TODO - Send to my E-mail the CSV every 1 hour the live running actions and the portfolio value
         print(message)
@@ -142,7 +173,6 @@ class SwingHigh():
     def get_position(self, symbol):
         return self.positions.get(symbol, False)
 
-
     def get_last_price(self, symbol):
         try:
             ticker = fetcher_client.get_symbol_ticker(symbol=symbol)
@@ -150,26 +180,26 @@ class SwingHigh():
         except Exception as e:
             self.log_message(f"Error fetching last price for {symbol}: {e}")
             return None
-    
+
     def sell_all(self, symbol, entry_price):
-            current_price = self.get_last_price(symbol)
-            if current_price is None:
-                return
-            if self.get_position(symbol):
-                dropping_price = entry_price * 0.995
-                higher_than_earlier_price = entry_price * 1.015
-                if current_price < dropping_price or current_price >= higher_than_earlier_price:
-                    shares = self.shares_per_ticker[symbol]
-                    try:
-                        # Ensure client is accessible
-                        order = client.new_order(symbol=symbol, side=self.client.SIDE_SELL, type=self.client.ORDER_TYPE_MARKET, quantity=shares)
-                        sale_value = shares * current_price
-                        sale_value -= sale_value * self.fees  # Subtract fees
-                        self.portfolio_value += sale_value
-                        self.log_message(f"Selling all for {symbol} at {current_price}")
-                        self.positions[symbol] = False
-                    except Exception as e:
-                        self.log_message(f"Error selling {shares} coins of {symbol}: {e}")
+        current_price = self.get_last_price(symbol)
+        if current_price is None:
+            return
+        if self.get_position(symbol):
+            dropping_price = entry_price * 0.995
+            higher_than_earlier_price = entry_price * 1.015
+            if current_price < dropping_price or current_price >= higher_than_earlier_price:
+                shares = self.shares_per_ticker[symbol]
+                try:
+                    # Ensure client is accessible
+                    order = client.new_order(symbol=symbol, side='SELL', type='MARKET', quantity=shares)
+                    sale_value = shares * current_price
+                    sale_value -= sale_value * self.fees  # Subtract fees
+                    self.portfolio_value += sale_value
+                    self.log_message(f"Selling all for {symbol} at {current_price}")
+                    self.positions[symbol] = False
+                except Exception as e:
+                    self.log_message(f"Error selling {shares} coins of {symbol}: {e}")
 
     def run_live_trading(self, duration_minutes):
         print("Running live trading...")
@@ -179,11 +209,17 @@ class SwingHigh():
                 self.portfolio_value = float(item['free'])
                 print(f"Starting with a portfolio value of : {self.portfolio_value} USDT")
         
+        # Start the thread for fetching volatile tickers
+        fetch_thread = threading.Thread(target=self.fetch_volatile_tickers_lively)
+        fetch_thread.daemon = True
+        fetch_thread.start()
+        
         start_time = time.time()
         end_time = start_time + duration_minutes * 60
 
         while time.time() < end_time:
-            volatile_tickers = self.fetch_volatile_tickers_lively()
+            with self.lock:
+                volatile_tickers = self.volatile_tickers.copy()
             new_symbols = [ticker for ticker in volatile_tickers]
 
             # Sell tickers that are no longer in the top volatile tickers
@@ -197,15 +233,16 @@ class SwingHigh():
                 initial_price_trading = ticker['initial_price']
                 if symbol not in self.positions or not self.positions[symbol]:
                     allocation = self.portfolio_value / len(volatile_tickers)
-                    shares = allocation / initial_price_trading
-                    self.shares_per_ticker[symbol] = shares
-                    self.positions[symbol] = True
-                    self.data[symbol] = [ticker]  # Initialize the data list for the symbol
-                    self.buy_order(symbol, shares)
-                    self.log_message(f"Bought {shares} coins of {symbol} at {initial_price_trading}")
+                    shares = self.calculate_max_shares(symbol, allocation)
+                    if shares > 0:
+                        self.shares_per_ticker[symbol] = shares
+                        self.positions[symbol] = True
+                        self.data[symbol] = [ticker]  # Initialize the data list for the symbol
+                        self.buy_order(symbol, shares)
+                        self.log_message(f"Bought {shares} coins of {symbol} at {initial_price_trading}")
 
-            print("Waiting for 5 minutes before volatility checks...")
-            time.sleep(300)  # Wait for 5 minutes before fetching again
+            print("Waiting for 1 minute before next check...")
+            time.sleep(60)  # Wait for 1 minute before checking again
 
         # Sell ALL positions after the duration
         for symbol in list(self.positions.keys()):
