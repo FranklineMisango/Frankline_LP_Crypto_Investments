@@ -8,13 +8,19 @@ import pytz
 from binance.client import Client
 import pandas as pd
 import os
+from binance.spot import Spot
 
-# Configuring the Binance client API ; # Get API keys from environment variables
-api_key = os.getenv('Binance_API_KEY')
-api_secret = os.getenv('Binance_secret_KEY')
+client = Spot()
 
-# Initialize Binance client
-client = Client(api_key, api_secret)
+# Get server timestamp
+print(client.time())
+# Get klines of BTCUSDT at 1m interval
+print(client.klines("BTCUSDT", "1m"))
+# Get last 10 klines of BNBUSDT at 1h interval
+print(client.klines("BNBUSDT", "1h", limit=10))
+
+# API key/secret are required for user data endpoints
+client = Spot(api_key=os.getenv('Binance_API_KEY'), api_secret=os.getenv('Binance_secret_KEY'))
 
 class SwingHigh():
 
@@ -26,7 +32,7 @@ class SwingHigh():
         self.shares_per_ticker = {}
         self.positions = {}
         self.portfolio_value = client.get_account()
-        self.fees = 0.006  # Binance trading fee (0.1%)
+        self.fees = 0.001  # Binance trading fee (0.1%)
 
     def fetch_volatile_tickers_for_last_30_minutes(self):
         hkt = pytz.timezone('Asia/Hong_Kong')
@@ -49,12 +55,12 @@ class SwingHigh():
 
                         if gain >= 2:
                             volatile_tickers[symbol] = {
-                                'Crypto Symbol': symbol,
+                                'symbol': symbol,
                                 'initial_price': initial_price,
                                 'current_price': current_price,
-                                'Percentage Change': gain,
+                                'percentage_change': gain,
                                 'num_trades': num_trades,
-                                'Volume ': volume
+                                'volume': volume
                             }
                 except Exception as e:
                     print(f"Error fetching data for {symbol}: {e}")
@@ -97,85 +103,97 @@ class SwingHigh():
             print("Waiting for 30 minutes before fetching again...")
             time.sleep(1800)  # Wait for 30 minutes before fetching again
 
+    # customize for live ordering and selling 
     def buy_order(self, symbol, shares):
-        try:
-            order = self.exchange.create_market_buy_order(symbol, shares)
-            self.order_numbers[symbol] = order['id']
-            self.log_message(f"Buying {shares} coins of {symbol} at market price")
-        except Exception as e:
-            self.log_message(f"Error buying {shares} coins of {symbol}: {e}")
+            try:
+                order = client.order_market_buy(symbol=symbol, quantity=shares)
+                self.order_numbers[symbol] = order['orderId']
+                self.log_message(f"Buying {shares} coins of {symbol} at market price")
+            except Exception as e:
+                self.log_message(f"Error buying {shares} coins of {symbol}: {e}")
        
-    def log_message(self, message):
+    def log_message(self, message): 
+        #TODO - Send to my E-mail every 1 hour the live running actions and the portfolio value
         print(message)
-        with open('backtest_log.csv', 'a') as f:
+        with open('Live_Running_Actions.csv', 'a') as f:
             writer = csv.writer(f)
             writer.writerow([dt.now(), message])
 
     def get_position(self, symbol):
         return self.positions.get(symbol, False)
 
+
     def get_last_price(self, symbol):
-        return self.exchange.fetch_ticker(symbol)['last']
+        try:
+            ticker = client.get_symbol_ticker(symbol=symbol)
+            return float(ticker['price'])
+        except Exception as e:
+            self.log_message(f"Error fetching last price for {symbol}: {e}")
+            return None
     
     def sell_all(self, symbol, entry_price):
         current_price = self.get_last_price(symbol)
+        if current_price is None:
+            return
         if self.get_position(symbol):
-            # TODO - Redefine the logic for selling and work on whether should follow volatilty or the backtest sale logic
-            dropping_price =  entry_price * 0.995
+            dropping_price = entry_price * 0.995
             higher_than_earlier_price = entry_price * 1.015
             if current_price < dropping_price or current_price >= higher_than_earlier_price:
                 shares = self.shares_per_ticker[symbol]
-                sale_value = shares * current_price
-                sale_value -= sale_value * self.fees  # Subtract fees
-                self.portfolio_value += sale_value
-                self.log_message(f"Selling all for {symbol} at {current_price} ")
-                self.positions[symbol] = False
+                try:
+                    order = client.order_market_sell(symbol=symbol, quantity=shares)
+                    sale_value = shares * current_price
+                    sale_value -= sale_value * self.fees  # Subtract fees
+                    self.portfolio_value += sale_value
+                    self.log_message(f"Selling all for {symbol} at {current_price}")
+                    self.positions[symbol] = False
+                except Exception as e:
+                    self.log_message(f"Error selling {shares} coins of {symbol}: {e}")
 
-    def run_live_trading(self):
-        print("Running live trading...")
-        print(f"Starting with a portfolio value of :{self.portfolio_value}")
-        volatile_tickers = self.fetch_volatile_tickers_lively()
-        self.symbols = [ticker['symbol'] for ticker in volatile_tickers]
-        
-        # Allocate 30% to the highest volatility ticker and 70% to the rest
-        if volatile_tickers:
-            highest_volatility_ticker = volatile_tickers[0]
-            highest_volatility_allocation = self.portfolio_value * 0.3
-            rest_allocation = self.portfolio_value * 0.7 / (len(volatile_tickers) - 1) if len(volatile_tickers) > 1 else 0
+    def run_live_trading(self, duration_minutes):
+            print("Running live trading...")
+            account_info = client.get_account()['balances']
+            for item in account_info:
+                if item['asset'] == 'USDT':
+                    self.portfolio_value = float(item['free'])
+                    print(f"Starting with a portfolio value of : {self.portfolio_value} USDT")
+            
+            start_time = time.time()
+            end_time = start_time + duration_minutes * 60
 
-        for ticker in volatile_tickers:
-            symbol = ticker['symbol']
-            initial_price_trading = ticker['initial_price']
-            allocation = highest_volatility_allocation if symbol == highest_volatility_ticker['symbol'] else rest_allocation
-            shares = allocation / initial_price_trading
-            self.shares_per_ticker[symbol] = shares
-            self.positions[symbol] = True
-            self.data[symbol] = []  # Initialize the data list for the symbol
-            self.log_message(f"Bought {shares} coins of {symbol} at {initial_price_trading}")
-        
-        for _ in range(60):  
-            for symbol in self.symbols:
-                if self.get_position(symbol):
-                    current_price = self.get_last_price(symbol)
-                    entry_price = self.data[symbol][0] if symbol in self.data and self.data[symbol] else current_price
-                    self.data[symbol].append(current_price)
-                    if current_price < entry_price * 0.995 or current_price >= entry_price * 1.015:
-                        self.sell_all(symbol, entry_price)
-            #time.sleep(60)  # Wait for 1 minute
+            while time.time() < end_time:
+                volatile_tickers = self.fetch_volatile_tickers_lively()
+                new_symbols = [ticker for ticker in volatile_tickers]
 
-        # Sell everything at the end of the backtest
-        for symbol in self.symbols:
-            if self.get_position(symbol):
-                self.sell_all(symbol, self.data[symbol][0])
+                # Sell tickers that are no longer in the top volatile tickers
+                for symbol in list(self.positions.keys()):
+                    if symbol not in new_symbols:
+                        self.sell_all(symbol, self.data[symbol][0]['initial_price'])
 
-        # Calculate final portfolio value
-        final_portfolio_value = 0
-        for symbol in self.symbols:
-            if symbol in self.shares_per_ticker:
+                # Buy new top volatile tickers
+                for ticker in volatile_tickers.values():
+                    symbol = ticker['symbol']
+                    initial_price_trading = ticker['initial_price']
+                    if symbol not in self.positions or not self.positions[symbol]:
+                        allocation = self.portfolio_value / len(volatile_tickers)
+                        shares = allocation / initial_price_trading
+                        self.shares_per_ticker[symbol] = shares
+                        self.positions[symbol] = True
+                        self.data[symbol] = [ticker]  # Initialize the data list for the symbol
+                        self.buy_order(symbol, shares)
+                        self.log_message(f"Bought {shares} coins of {symbol} at {initial_price_trading}")
+
+                time.sleep(1800)  # Wait for 30 minutes before fetching again
+
+            # Calculate final portfolio value
+            final_portfolio_value = 0
+            for symbol in self.shares_per_ticker:
                 final_portfolio_value += self.shares_per_ticker[symbol] * self.get_last_price(symbol)
-        final_portfolio_value -= final_portfolio_value * self.fees  # Subtract fees
+            final_portfolio_value -= final_portfolio_value * self.fees  # Subtract fees
 
-        self.log_message(f"Final portfolio value: {final_portfolio_value}")
+            self.log_message(f"Final portfolio value: {final_portfolio_value}")
+
+
 if __name__ == "__main__":
     strategy = SwingHigh()
-    strategy.run_live_trading()
+    strategy.run_live_trading(duration_minutes=60)  # Run live trading for X specified hour
