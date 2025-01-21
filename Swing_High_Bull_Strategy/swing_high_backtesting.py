@@ -17,7 +17,7 @@ class SwingHigh():
         self.order_numbers = {}
         self.shares_per_ticker = {}
         self.positions = {}
-        self.portfolio_value = 100  # Initial portfolio value
+        self.portfolio_value = 60  # Initial portfolio value
         self.fees = 0.006  # Binance trading fee (0.1%)
 
     def fetch_the_volatile_cryptocurrencies(self, hours):
@@ -92,7 +92,7 @@ class SwingHigh():
                 self.positions[symbol] = False
 
     def run_backtest(self):
-        volatile_tickers = self.fetch_the_volatile_cryptocurrencies(hours=1)
+        volatile_tickers = self.fetch_the_volatile_cryptocurrencies(hours=24)
         self.symbols = [ticker['symbol'] for ticker in volatile_tickers]
         
         # Allocate 30% to the highest volatility ticker and 70% to the rest

@@ -92,14 +92,45 @@ class SwingHigh():
         return volatile_tickers
 
     
-    # customize for live ordering and selling 
+  
+
     def buy_order(self, symbol, shares):
-            try:
-                order = client.new_order(symbol=symbol, side='BUY', type='MARKET', quantity=shares)
-                self.order_numbers[symbol] = order['orderId']
-                self.log_message(f"Buying {shares} coins of {symbol} at market price")
-            except Exception as e:
-                self.log_message(f"Error buying {shares} coins of {symbol}: {e}")
+        try:
+            lot_size = self.get_lot_size(symbol)
+            min_notional = self.get_min_notional(symbol)
+            last_price = self.get_last_price(symbol)
+            
+            # Adjust shares to meet the lot size requirement
+            shares = round(shares // lot_size * lot_size, 8)
+            
+            # Ensure the total value meets the minimum notional value
+            if shares * last_price < min_notional:
+                self.log_message(f"Order value {shares * last_price} is below the minimum notional value {min_notional}")
+                return
+            
+            order = client.new_order(symbol=symbol, side='BUY', type='MARKET', quantity=shares)
+            self.order_numbers[symbol] = order['orderId']
+            self.log_message(f"Buying {shares} coins of {symbol} at market price")
+        except Exception as e:
+            self.log_message(f"Error buying {shares} coins of {symbol}: {e}")
+
+    def get_lot_size(self, symbol):
+        exchange_info = client.exchange_info()
+        for s in exchange_info['symbols']:
+            if s['symbol'] == symbol:
+                for f in s['filters']:
+                    if f['filterType'] == 'LOT_SIZE':
+                        return float(f['stepSize'])
+        return 1.0  # Default to 1.0 if not found
+
+    def get_min_notional(self, symbol):
+        exchange_info = client.exchange_info()
+        for s in exchange_info['symbols']:
+            if s['symbol'] == symbol:
+                for f in s['filters']:
+                    if f['filterType'] == 'MIN_NOTIONAL':
+                        return float(f['minNotional'])
+        return 10.0  # Default to 10.0 if not foundound
        
     def log_message(self, message): 
         #TODO - Send to my E-mail the CSV every 1 hour the live running actions and the portfolio value
@@ -176,7 +207,7 @@ class SwingHigh():
             print("Waiting for 5 minutes before volatility checks...")
             time.sleep(300)  # Wait for 5 minutes before fetching again
 
-        # Sell all positions after the duration
+        # Sell ALL positions after the duration
         for symbol in list(self.positions.keys()):
             self.sell_all(symbol, self.data[symbol][0]['initial_price'])
             print(f"Sold all {symbol} coins")
@@ -194,4 +225,4 @@ class SwingHigh():
 
 if __name__ == "__main__":
     strategy = SwingHigh()
-    strategy.run_live_trading(duration_minutes=60)  # Run live trading for specified minutes
+    strategy.run_live_trading(duration_minutes=30)  # Run live trading for specified minutes
