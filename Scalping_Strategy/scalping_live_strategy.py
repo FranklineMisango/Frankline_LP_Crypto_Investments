@@ -12,7 +12,7 @@ import sys
 from binance.spot import Spot
 import threading
 import math
-
+from concurrent.futures import ThreadPoolExecutor
 
 
 client = Spot()
@@ -20,6 +20,7 @@ client = Spot(api_key=os.getenv('Binance_API_KEY'), api_secret=os.getenv('Binanc
 fetcher_client = Client(os.getenv('Binance_Fetcher_api'), os.getenv('Binance_Fetcher_secret')) #Main Data Fetcher API
 
 class ScalpingStrategy:
+
     def __init__(self, symbol, initial_portfolio_value, profit_threshold=0.001, stop_loss_threshold=0.001):
         self.symbol = symbol
         self.profit_threshold = profit_threshold
@@ -36,7 +37,7 @@ class ScalpingStrategy:
         self.fetcher_client = Client(os.getenv('Binance_Fetcher_api'), os.getenv('Binance_Fetcher_secret'))
         self.lock = threading.Lock()
 
-     def get_stock_data(self, ticker, since):
+    def get_stock_data(self, ticker, since):
         klines = fetcher_client.get_historical_klines(ticker, Client.KLINE_INTERVAL_5MINUTE, since)
         df = pd.DataFrame(klines, columns=['Open Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'Close Time', 'Quote Asset Volume', 'Number of Trades', 'Taker Buy Base Asset Volume', 'Taker Buy Quote Asset Volume', 'Ignore'])
         df['Open Time'] = pd.to_datetime(df['Open Time'], unit='ms')
@@ -52,40 +53,69 @@ class ScalpingStrategy:
         df['Taker Buy Quote Asset Volume'] = df['Taker Buy Quote Asset Volume'].astype(float)
         df.set_index('Open Time', inplace=True)  # Set the index to 'Open Time'
         return df
+
     
-    def place_order(self, side, price, timestamp):
-        print(f"Simulating {side} order for {self.quantity} {self.symbol} at {price} on {timestamp}")
-        self.trades.append({'side': side, 'price': price, 'time': timestamp})
-        return True
+    def get_lot_size(self, symbol):
+        exchange_info = client.exchange_info()
+        for s in exchange_info['symbols']:
+            if s['symbol'] == symbol:
+                for f in s['filters']:
+                    if f['filterType'] == 'LOT_SIZE':
+                        return float(f['stepSize'])
+        return 1.0  # Default to 1.0 if not found
 
-    def get_minute_data(self, start_date, end_date, interval='1m'):
-        since = self.exchange.parse8601(start_date.isoformat())
-        end = self.exchange.parse8601(end_date.isoformat())
-        data = []
+    def get_min_notional(self, symbol):
+        exchange_info = client.exchange_info()
+        for s in exchange_info['symbols']:
+            if s['symbol'] == symbol:
+                for f in s['filters']:
+                    if f['filterType'] == 'MIN_NOTIONAL':
+                        return float(f['minNotional'])
+        
+        return 10.0  # Default to 10.0 if not found
+    
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = []
-            chunk_size = (end - since) // 4
-            for i in range(4):
-                chunk_start = since + i * chunk_size
-                chunk_end = min(since + (i + 1) * chunk_size, end)
-                futures.append(executor.submit(self.fetch_data_chunk, chunk_start, chunk_end, interval))
-
-            for future in futures:
-                data.extend(future.result())
-        return data
-
-    def fetch_data_chunk(self, since, end, interval):
-        ohlcv = self.exchange.fetch_ohlcv(self.symbol, timeframe=interval, since=since, limit=1000)
-        return ohlcv
-
-    def get_last_price(self):
+    def buy_order(self, symbol, shares):
         try:
-            ticker = self.fetcher_client.get_symbol_ticker(symbol=self.symbol)
+            lot_size = self.get_lot_size(symbol)
+            min_notional = self.get_min_notional(symbol)
+            last_price = self.get_last_price(symbol)
+            
+            # Adjust shares to meet the lot size requirement
+            shares = round(shares // lot_size * lot_size, 8)
+            
+            # Ensure the total value meets the minimum notional value
+            if shares * last_price < min_notional:
+                # Adjust shares to meet the minimum notional value
+                shares = round((min_notional / last_price) // lot_size * lot_size, 8)
+                # Add a small buffer to ensure the order value meets the minimum notional value
+                shares += lot_size
+                if shares * last_price < min_notional:
+                    self.log_message(f"Order value {shares * last_price} is still below the minimum notional value {min_notional} after adjustment")
+                    return
+            
+            # Check if the order value exceeds available funds
+            order_value = shares * last_price
+            if order_value > self.available_funds:
+                self.log_message(f"Insufficient funds to buy {shares} coins of {symbol}. Order value: {order_value}, Available funds: {self.available_funds}")
+                return
+            
+            order = client.new_order(symbol=symbol, side='BUY', type='MARKET', quantity=shares)
+            self.order_numbers[symbol] = order['orderId']
+            self.available_funds -= order_value  # Update available funds
+            self.log_message(f"Buying {shares} coins of {symbol} at market price")
+        except Exception as e:
+            self.log_message(f"Error buying {shares} coins of {symbol}: {e}")
+    
+    
+    def get_last_price(symbol):
+        try:
+            ticker = fetcher_client.get_symbol_ticker(symbol=symbol)
             return float(ticker['price'])
         except Exception as e:
-            print(f"Error fetching last price for {self.symbol}: {e}")
+            print(f"Error fetching last price for {symbol}: {e}")
             return None
+
 
     def buy_order(self, quantity):
         try:
@@ -116,29 +146,49 @@ class ScalpingStrategy:
         start_time = time.time()
         end_time = start_time + duration_minutes * 60
 
+        buy_price = None
+        portfolio_values = [self.portfolio_value]  # Track portfolio value over time
+
         while time.time() < end_time:
             last_price = self.get_last_price()
             if last_price is None:
                 continue
 
-            if self.position == 0:
-                # Buy logic
-                quantity = self.portfolio_value / last_price
-                self.buy_order(quantity)
-            elif self.position == 1:
-                # Sell logic
-                if last_price >= self.max_profit_trade or last_price <= self.max_loss_trade:
-                    self.sell_order(self.quantity)
+            if buy_price is None:
+                buy_price = last_price
+                self.quantity = self.portfolio_value / buy_price
+                self.buy_order(self.quantity)
+                self.position = 1
+            else:
+                profit = (last_price - buy_price) / buy_price
+                loss = (buy_price - last_price) / buy_price
 
-            print("Waiting for 1 minute before next check...")
-            time.sleep(60)  # Wait for 1 minute before checking again
+                if profit >= self.profit_threshold:
+                    self.sell_order(self.quantity)
+                    self.portfolio_value = self.quantity * last_price
+                    portfolio_values.append(self.portfolio_value)  # Update portfolio value
+                    print(f"Trade closed with profit: {profit * 100:.2f}%")
+                    if self.max_profit_trade is None or profit > self.max_profit_trade['profit']:
+                        self.max_profit_trade = {'profit': profit, 'time': time.time()}
+                    buy_price = None
+                    self.position = 0
+                elif loss >= self.stop_loss_threshold:
+                    self.sell_order(self.quantity)
+                    self.portfolio_value = self.quantity * last_price
+                    portfolio_values.append(self.portfolio_value)  # Update portfolio value
+                    print(f"Trade closed with loss: {loss * 100:.2f}%")
+                    if self.max_loss_trade is None or loss > self.max_loss_trade['loss']:
+                        self.max_loss_trade = {'loss': loss, 'time': time.time()}
+                    buy_price = None
+                    self.position = 0
+
 
         # Sell all positions before ending the live trading
         if self.position == 1:
             self.sell_order(self.quantity)
 
         print(f"Final portfolio value: {self.portfolio_value}")
-        print(f"Closing live trading at time {datetime.now()}")
+        print(f"Closing live trading at time {dt.now()}")
 
 if __name__ == "__main__":
     strategy = ScalpingStrategy(symbol='BTC/USDT')
