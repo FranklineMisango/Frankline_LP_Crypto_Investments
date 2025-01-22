@@ -2,13 +2,12 @@ import pandas as pd
 import ccxt
 import time
 import plotly.graph_objects as go
-import plotly.io as pio
-from plotly.subplots import make_subplots
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+import plotly.io as pio
 
 class ScalpingStrategy:
-    def __init__(self, symbol, initial_portfolio_value=1000, profit_threshold=0.001, stop_loss_threshold=0.001):
+    def __init__(self, symbol, initial_portfolio_value=10, profit_threshold=0.001, stop_loss_threshold=0.001):
         self.symbol = symbol
         self.profit_threshold = profit_threshold
         self.stop_loss_threshold = stop_loss_threshold
@@ -114,10 +113,16 @@ class ScalpingStrategy:
         if self.max_loss_trade:
             print(f"Most loss-making trade: {self.max_loss_trade['loss'] * 100:.2f}% on {self.max_loss_trade['time']}")
         
+        self.save_trades_to_csv()
         self.plot_results(portfolio_values)
         end_time = time.time()
         elapsed_time = end_time - start_time
         print(f"Backtest completed in {elapsed_time:.2f} seconds")
+
+    def save_trades_to_csv(self):
+        df = pd.DataFrame(self.trades)
+        df.to_csv('trades.csv', index=False)
+        print("Trades saved to trades.csv")
 
     def plot_pnl(self, portfolio_values):
         pnl = [0]
@@ -131,14 +136,12 @@ class ScalpingStrategy:
         fig.add_trace(go.Scatter(x=[trade['time'] for trade in self.trades], y=pnl, mode='lines', name='PnL'))
         fig.add_trace(go.Scatter(x=[trade['time'] for trade in self.trades], y=portfolio_values, mode='lines', name='Portfolio Value'))
         fig.update_layout(title='Profit and Loss Over Time', xaxis_title='Time', yaxis_title='Value')
-        pio.write_html(fig, file='pnl_over_time.html', auto_open=False)
+        pio.write_image(fig, 'pnl.png')
+        print("PnL graph saved to pnl.png")
 
     def plot_results(self, portfolio_values):
-    # Create the main figure with market data and trades
-        fig = make_subplots(rows=1, cols=1, shared_xaxes=True, 
-                            vertical_spacing=0.1, 
-                            subplot_titles=('Market Data',),
-                            row_heights=[1.0])
+        # Create the main figure with market data and trades
+        fig = go.Figure()
 
         fig.add_trace(go.Candlestick(
             x=self.data.index,
@@ -147,7 +150,7 @@ class ScalpingStrategy:
             low=self.data['Low'],
             close=self.data['Close'],
             name='Market Data'
-        ), row=1, col=1)
+        ))
 
         buy_trades = [trade for trade in self.trades if trade['side'] == 'buy']
         sell_trades = [trade for trade in self.trades if trade['side'] == 'sell']
@@ -158,7 +161,7 @@ class ScalpingStrategy:
             mode='markers',
             marker=dict(color='green', size=10),
             name='Buy Trades'
-        ), row=1, col=1)
+        ))
 
         fig.add_trace(go.Scatter(
             x=[trade['time'] for trade in sell_trades],
@@ -166,7 +169,7 @@ class ScalpingStrategy:
             mode='markers',
             marker=dict(color='red', size=10),
             name='Sell Trades'
-        ), row=1, col=1)
+        ))
 
         # Highlight the most profitable and loss-making trades
         if self.max_profit_trade:
@@ -176,7 +179,7 @@ class ScalpingStrategy:
                 mode='markers',
                 marker=dict(color='blue', size=15, symbol='star'),
                 name='Most Profitable Trade'
-            ), row=1, col=1)
+            ))
 
         if self.max_loss_trade:
             fig.add_trace(go.Scatter(
@@ -185,12 +188,13 @@ class ScalpingStrategy:
                 mode='markers',
                 marker=dict(color='orange', size=15, symbol='star'),
                 name='Most Loss-Making Trade'
-            ), row=1, col=1)
+            ))
 
         fig.update_layout(title='Scalping Strategy Backtest for the symbol', xaxis_title='Time', yaxis_title='Price')
 
-        # Save the main figure as an HTML file
-        pio.write_html(fig, file='scalping_strategy_backtest.html', auto_open=False)
+        # Save the main figure
+        pio.write_image(fig, 'market_data.png')
+        print("Market data graph saved to market_data.png")
 
         # Create a separate figure for the trade details table
         trade_details = go.Figure(data=[go.Table(
@@ -208,15 +212,16 @@ class ScalpingStrategy:
 
         trade_details.update_layout(title='Trade Details')
 
-        # Save the trade details table as an HTML file
-        pio.write_html(trade_details, file='trade_details.html', auto_open=False)
+        # Save the trade details table
+        pio.write_image(trade_details, 'trade_details.png')
+        print("Trade details table saved to trade_details.png")
 
         # Plot PnL over time
         self.plot_pnl(portfolio_values)
 
 if __name__ == "__main__":
-    symbol = 'SPX/USDT'
-    start_date = datetime(2024, 12, 11)
-    end_date = datetime(2025, 1, 12)
+    symbol = 'VTHO/USDT'
+    start_date = datetime(2025, 1, 15)
+    end_date = datetime(2025, 1, 2)
     strategy = ScalpingStrategy(symbol)
     strategy.run_backtest(start_date, end_date)
