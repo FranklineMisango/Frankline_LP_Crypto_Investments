@@ -4,7 +4,6 @@ import time
 import plotly.graph_objects as go
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-import plotly.io as pio
 
 class ScalpingStrategy:
     def __init__(self, symbol, initial_portfolio_value=10, profit_threshold=0.001, stop_loss_threshold=0.001):
@@ -62,34 +61,32 @@ class ScalpingStrategy:
     def run_backtest(self, start_date, end_date):
         start_time = time.time()
         print("Starting backtest")
+        print("All times are in UTC")
         self.data = self.get_minute_data(start_date, end_date)
         print("Data Fetched successfully")
+        print(self.data.head())
         buy_price = None
+        highest_price = None
         portfolio_values = [self.portfolio_value]  # Track portfolio value over time
         
+        # Remove duplicate labels
+        self.data = self.data[~self.data.index.duplicated(keep='first')]
+
         for i in range(len(self.data)):
             current_price = self.data['Close'].iloc[i]
             current_time = self.data.index[i]
             
             if buy_price is None:
                 buy_price = current_price
+                highest_price = current_price
                 self.quantity = self.portfolio_value / buy_price
                 self.place_order('buy', buy_price, current_time)
                 self.position = 1
             else:
-                profit = (current_price - buy_price) / buy_price
-                loss = (buy_price - current_price) / buy_price
+                highest_price = max(highest_price, current_price)
+                loss = (highest_price - current_price) / highest_price
                 
-                if profit >= self.profit_threshold:
-                    self.place_order('sell', current_price, current_time)
-                    self.portfolio_value = self.quantity * current_price
-                    portfolio_values.append(self.portfolio_value)  # Update portfolio value
-                    print(f"Trade closed with profit: {profit * 100:.2f}%")
-                    if self.max_profit_trade is None or profit > self.max_profit_trade['profit']:
-                        self.max_profit_trade = {'profit': profit, 'time': current_time}
-                    buy_price = None
-                    self.position = 0
-                elif loss >= self.stop_loss_threshold:
+                if loss >= self.stop_loss_threshold:
                     self.place_order('sell', current_price, current_time)
                     self.portfolio_value = self.quantity * current_price
                     portfolio_values.append(self.portfolio_value)  # Update portfolio value
@@ -97,6 +94,19 @@ class ScalpingStrategy:
                     if self.max_loss_trade is None or loss > self.max_loss_trade['loss']:
                         self.max_loss_trade = {'loss': loss, 'time': current_time}
                     buy_price = None
+                    highest_price = None
+                    self.position = 0
+                elif (current_price - buy_price) / buy_price >= self.profit_threshold:
+                    highest_price = current_price  # Update highest price to current price
+                elif (current_price - buy_price) / buy_price < self.profit_threshold:
+                    self.place_order('sell', current_price, current_time)
+                    self.portfolio_value = self.quantity * current_price
+                    portfolio_values.append(self.portfolio_value)  # Update portfolio value
+                    print(f"Trade closed with profit: {(current_price - buy_price) / buy_price * 100:.2f}%")
+                    if self.max_profit_trade is None or (current_price - buy_price) / buy_price > self.max_profit_trade['profit']:
+                        self.max_profit_trade = {'profit': (current_price - buy_price) / buy_price, 'time': current_time}
+                    buy_price = None
+                    highest_price = None
                     self.position = 0
 
         # Unload everything at the end_date
@@ -119,27 +129,14 @@ class ScalpingStrategy:
         elapsed_time = end_time - start_time
         print(f"Backtest completed in {elapsed_time:.2f} seconds")
 
+
     def save_trades_to_csv(self):
         df = pd.DataFrame(self.trades)
         df.to_csv('trades.csv', index=False)
         print("Trades saved to trades.csv")
 
-    def plot_pnl(self, portfolio_values):
-        pnl = [0]
-        for trade in self.trades:
-            if trade['side'] == 'sell':
-                pnl.append(pnl[-1] + (trade['price'] - self.trades[self.trades.index(trade) - 1]['price']) * self.quantity)
-            else:
-                pnl.append(pnl[-1])
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=[trade['time'] for trade in self.trades], y=pnl, mode='lines', name='PnL'))
-        fig.add_trace(go.Scatter(x=[trade['time'] for trade in self.trades], y=portfolio_values, mode='lines', name='Portfolio Value'))
-        fig.update_layout(title='Profit and Loss Over Time', xaxis_title='Time', yaxis_title='Value')
-        pio.write_image(fig, 'pnl.png')
-        print("PnL graph saved to pnl.png")
-
     def plot_results(self, portfolio_values):
+        print("Generating Results Visual")
         # Create the main figure with market data and trades
         fig = go.Figure()
 
@@ -192,36 +189,14 @@ class ScalpingStrategy:
 
         fig.update_layout(title='Scalping Strategy Backtest for the symbol', xaxis_title='Time', yaxis_title='Price')
 
-        # Save the main figure
-        pio.write_image(fig, 'market_data.png')
-        print("Market data graph saved to market_data.png")
+        fig.show()
 
-        # Create a separate figure for the trade details table
-        trade_details = go.Figure(data=[go.Table(
-            header=dict(values=['Side', 'Price', 'Time'],
-                        fill_color='paleturquoise',
-                        align='left'),
-            cells=dict(values=[
-                [trade['side'] for trade in self.trades],
-                [trade['price'] for trade in self.trades],
-                [trade['time'].strftime('%Y-%m-%d %H:%M:%S') for trade in self.trades]
-            ],
-            fill_color='lavender',
-            align='left')
-        )])
-
-        trade_details.update_layout(title='Trade Details')
-
-        # Save the trade details table
-        pio.write_image(trade_details, 'trade_details.png')
-        print("Trade details table saved to trade_details.png")
-
-        # Plot PnL over time
-        self.plot_pnl(portfolio_values)
 
 if __name__ == "__main__":
-    symbol = 'VTHO/USDT'
-    start_date = datetime(2025, 1, 15)
-    end_date = datetime(2025, 1, 2)
+    symbol = 'CLV/USDT'
+    start_date_str = '2025-01-21 00:00'
+    end_date_str = '2025-01-22 20:40'
+    start_date = datetime.strptime(start_date_str, '%Y-%m-%d %H:%M')
+    end_date = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M')
     strategy = ScalpingStrategy(symbol)
     strategy.run_backtest(start_date, end_date)
