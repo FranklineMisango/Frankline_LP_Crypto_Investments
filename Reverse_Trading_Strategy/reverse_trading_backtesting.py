@@ -1,101 +1,111 @@
+import ccxt
 import pandas as pd
-import time
-from datetime import datetime as dt, timedelta
-from binance.client import Client
-import os
-from lumibot.backtesting import CcxtBacktesting
-from lumibot.asset import Asset
-from lumibot.strategies import Strategy
-
-api_key = os.getenv('Binance_API_KEY')
-api_secret = os.getenv('Binance_secret_KEY')
-
-# Initialize Binance client
-client = Client(api_key, api_secret)
-
-# Research Whether to Fetch current data minute-minute/hourly/half-an-hour from Binance and employ the minute by minute strategy
-def Fetch_current_data_binance(ticker, start, end):
-    '''
-    klines = client.get_historical_klines(ticker, Client.KLINE_INTERVAL_1DAY, start, end)
-    df = pd.DataFrame(klines, columns=['Open Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'Close Time', 'Quote Asset Volume', 'Number of Trades', 'Taker Buy Base Asset Volume', 'Taker Buy Quote Asset Volume', 'Ignore'])
-    df['Open Time'] = pd.to_datetime(df['Open Time'], unit='ms')
-    df['Close Time'] = pd.to_datetime(df['Close Time'], unit='ms')
-    df['Open'] = df['Open'].astype(float)
-    df['High'] = df['High'].astype(float)
-    df['Low'] = df['Low'].astype(float)
-    df['Close'] = df['Close'].astype(float)
-    df['Volume'] = df['Volume'].astype(float)
-    df['Quote Asset Volume'] = df['Quote Asset Volume'].astype(float)
-    df['Number of Trades'] = df['Number of Trades'].astype(float)
-    df['Taker Buy Base Asset Volume'] = df['Taker Buy Base Asset Volume'].astype(float)
-    df['Taker Buy Quote Asset Volume'] = df['Taker Buy Quote Asset Volume'].astype(float)
-    df.set_index('Open Time', inplace=True)  # Set the index to 'Open Time'
-    return df
-    '''
-
-# Calculate support and resistance levels
-def calculate_support_resistance(df):
-    df['support'] = df['Low'].rolling(window=14).min()
-    df['resistance'] = df['High'].rolling(window=14).max()
-    return df
-
-# Identify reversal signals
-def identify_reversal_signals(df):
-    latest = df.iloc[-1]
-    previous = df.iloc[-2]
-    
-    # Reversal from resistance (bearish)
-    if latest['high'] >= latest['resistance'] and latest['close'] < previous['close']:
-        return 'sell'
-    
-    # Reversal from support (bullish)
-    if latest['low'] <= latest['support'] and latest['close'] > previous['close']:
-        return 'buy'
-
-    return 'none'
-
-# Reverse trading strategy
-def reverse_trading_strategy(exchange, symbol):
-    # Fetch and process daily data
-    daily_df = Fetch_current_data_binance(exchange, symbol, '1d', limit=100)
-    daily_df = calculate_support_resistance(daily_df)
-
-    # Identify reversal signals
-    signal = identify_reversal_signals(daily_df)
-    if signal == 'buy':
-        print("Bullish reversal signal identified.")
-        stop_loss = daily_df['low'].iloc[-1]
-        entry_price = daily_df['close'].iloc[-1]
-        target_price = entry_price + 2 * (entry_price - stop_loss)
-        print(f"Entry Price: {entry_price}, Stop Loss: {stop_loss}, Target Price: {target_price}")
-    elif signal == 'sell':
-        print("Bearish reversal signal identified.")
-        stop_loss = daily_df['high'].iloc[-1]
-        entry_price = daily_df['close'].iloc[-1]
-        target_price = entry_price - 2 * (stop_loss - entry_price)
-        print(f"Entry Price: {entry_price}, Stop Loss: {stop_loss}, Target Price: {target_price}")
-    else:
-        print("No reversal signal identified.")
+import numpy as np
+import plotly.graph_objects as go
 
 
+class ReverseTradingBacktest:
 
-# Backtesting with CCXTBACKTESTING
-# Allow the user to paste the market pair in form of A /B 
-base_symbol = input("Enter the Crypto symbol for backtesting : ") 
-start_date = dt(2024,1,1)
-end_date = dt(2025,1,1)
-asset = (Asset(symbol=base_symbol, asset_type="crypto"))
-exchange_id = "binance"  #"kucoin" #"bybit" #"okx" #"bitmex" # "binance"
+    def fetch_data(self, exchange_id, symbol, timeframe='1d', limit=1000, start_date=None, end_date=None):
+        """Fetch OHLCV data from an exchange using CCXT and filter by date range."""
+        exchange_class = getattr(ccxt, exchange_id)
+        exchange = exchange_class()
+        
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
 
-kwargs = {
-    # "max_data_download_limit":10000, # optional
-    "exchange_id":exchange_id,
-}
-CcxtBacktesting.MIN_TIMESTEP = "day"
-results, strat_obj = reverse_trading_strategy.run_backtest(
-    CcxtBacktesting,
-    start_date,
-    end_date,
-    quote_asset=Asset(symbol=base_symbol, asset_type="crypto"),
-    **kwargs,
+        # Filter data by start and end date if provided
+        if start_date:
+            df = df[df.index >= pd.to_datetime(start_date)]
+        if end_date:
+            df = df[df.index <= pd.to_datetime(end_date)]
+        
+        return df
+
+    def calculate_support_resistance(self, df):
+        """Calculate support and resistance levels using rolling min/max."""
+        df['support'] = df['low'].rolling(window=14).min()
+        df['resistance'] = df['high'].rolling(window=14).max()
+        return df
+
+    def identify_reversal_signals(self, df):
+        """Check for buy/sell reversal signals based on support/resistance levels."""
+        latest = df.iloc[-1]
+        previous = df.iloc[-2]
+        
+        if latest['high'] >= latest['resistance'] and latest['close'] < previous['close']:
+            return 'sell'
+        
+        if latest['low'] <= latest['support'] and latest['close'] > previous['close']:
+            return 'buy'
+
+        return 'none'
+
+    def run_backtest(self, exchange_id, symbol, initial_balance=100, start_date=None, end_date=None):
+        """Runs a simple backtest and plots P&L."""
+        df = self.fetch_data(exchange_id, symbol, start_date=start_date, end_date=end_date)
+        df = self.calculate_support_resistance(df)
+
+        balance = initial_balance
+        position = 0
+        entry_price = 0
+        trade_log = []
+
+        for i in range(15, len(df)):  # Start after enough data is collected
+            signal = self.identify_reversal_signals(df.iloc[:i])
+
+            if signal == 'buy' and position == 0:
+                entry_price = df.iloc[i]['close']
+                position = balance / entry_price  # Buy as many units as possible
+                balance = 0  # Use full balance
+                trade_log.append(('BUY', df.index[i], entry_price))
+
+            elif signal == 'sell' and position > 0:
+                balance = position * df.iloc[i]['close']  # Sell at current price
+                position = 0
+                trade_log.append(('SELL', df.index[i], df.iloc[i]['close']))
+
+        # Final value (assuming we sell at the last close price)
+        final_value = balance + (position * df.iloc[-1]['close'])
+        print(f"Initial Balance: {initial_balance}")
+        print(f"Final Balance: {final_value}")
+        print(f"Total Return: {((final_value / initial_balance) - 1) * 100:.2f}%")
+
+        # Plot price & trade signals using Plotly for interactivity
+        # Create a Plotly figure
+        fig = go.Figure()
+
+        # Add price data as a line chart
+        fig.add_trace(go.Scatter(x=df.index, y=df['close'], mode='lines', name='Price'))
+
+        # Add buy and sell markers
+        buy_dates = [trade[1] for trade in trade_log if trade[0] == 'BUY']
+        buy_prices = [trade[2] for trade in trade_log if trade[0] == 'BUY']
+        sell_dates = [trade[1] for trade in trade_log if trade[0] == 'SELL']
+        sell_prices = [trade[2] for trade in trade_log if trade[0] == 'SELL']
+
+        fig.add_trace(go.Scatter(x=buy_dates, y=buy_prices, mode='markers', name='Buy', marker=dict(color='green', size=10)))
+        fig.add_trace(go.Scatter(x=sell_dates, y=sell_prices, mode='markers', name='Sell', marker=dict(color='red', size=10)))
+
+        # Customize layout (title, labels)
+        fig.update_layout(
+            title=f"Backtest Results for {symbol}",
+            xaxis_title="Date",
+            yaxis_title="Price",
+            legend_title="Legend",
+        )
+
+        # Show the interactive plot
+        fig.show()
+
+# Run the custom backtest with specified start and end dates
+backtest = ReverseTradingBacktest()
+backtest.run_backtest(
+    exchange_id="binance", 
+    symbol="BTC/USDT", 
+    start_date="2024-01-01", 
+    end_date="2024-12-31"
 )
+
