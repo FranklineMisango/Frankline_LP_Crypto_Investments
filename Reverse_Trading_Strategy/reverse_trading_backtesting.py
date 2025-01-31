@@ -74,11 +74,11 @@ class ReverseTradingBacktest:
         print(f"Total Return: {((final_value / initial_balance) - 1) * 100:.2f}%")
 
         # Plot price & trade signals using Plotly for interactivity
-        # Create a Plotly figure
         fig = go.Figure()
 
         # Add price data as a line chart
-        fig.add_trace(go.Scatter(x=df.index, y=df['close'], mode='lines', name='Price'))
+        fig.add_trace(go.Scatter(x=df.index, y=df['close'], mode='lines', name='Price',
+                                line=dict(color='royalblue', width=2)))
 
         # Add buy and sell markers
         buy_dates = [trade[1] for trade in trade_log if trade[0] == 'BUY']
@@ -86,19 +86,41 @@ class ReverseTradingBacktest:
         sell_dates = [trade[1] for trade in trade_log if trade[0] == 'SELL']
         sell_prices = [trade[2] for trade in trade_log if trade[0] == 'SELL']
 
-        fig.add_trace(go.Scatter(x=buy_dates, y=buy_prices, mode='markers', name='Buy', marker=dict(color='green', size=10)))
-        fig.add_trace(go.Scatter(x=sell_dates, y=sell_prices, mode='markers', name='Sell', marker=dict(color='red', size=10)))
+        fig.add_trace(go.Scatter(x=buy_dates, y=buy_prices, mode='markers', name='Buy',
+                                marker=dict(color='green', size=10, symbol='triangle-up')))
+        fig.add_trace(go.Scatter(x=sell_dates, y=sell_prices, mode='markers', name='Sell',
+                                marker=dict(color='red', size=10, symbol='triangle-down')))
 
-        # Customize layout (title, labels)
+        # Customize layout
         fig.update_layout(
             title=f"Backtest Results for {symbol}",
             xaxis_title="Date",
             yaxis_title="Price",
             legend_title="Legend",
+            template='plotly_white',  # Clean background
+            font=dict(family='Arial, sans-serif', size=12, color='black'),
+            xaxis=dict(showgrid=True, gridcolor='lightgrey'),  # Add gridlines
+            yaxis=dict(showgrid=True, gridcolor='lightgrey'),
+            hovermode='x unified'  # Unified hover
         )
+
+        # Add annotations for buy/sell signals
+        for trade in trade_log:
+            action, date, price = trade
+            fig.add_annotation(
+                x=date,
+                y=price,
+                text=f"{action} at {price:.2f}",
+                showarrow=True,
+                arrowhead=2,
+                ax=0,
+                ay=-40 if action == 'BUY' else 40,
+                font=dict(color='green' if action == 'BUY' else 'red')
+            )
 
         # Show the interactive plot
         fig.show()
+
 
 # Run the custom backtest with specified start and end dates
 backtest = ReverseTradingBacktest()
@@ -106,6 +128,6 @@ backtest.run_backtest(
     exchange_id="binance", 
     symbol="BTC/USDT", 
     start_date="2024-01-01", 
-    end_date="2024-12-31"
+    end_date="2025-01-01"
 )
 
