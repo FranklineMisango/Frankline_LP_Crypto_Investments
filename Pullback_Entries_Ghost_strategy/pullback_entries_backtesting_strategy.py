@@ -2,6 +2,7 @@ import ccxt
 import pandas as pd
 import plotly.graph_objs as go
 from datetime import datetime, timedelta
+import csv
 
 # Initialize Binance client using ccxt
 def initialize_binance():
@@ -68,103 +69,180 @@ def calculate_bollinger_bands(series, period):
 
 # Identify trend from weekly chart
 def identify_trend(weekly_df):
-    latest = weekly_df.iloc[-1]
-    print(f"Latest Weekly Data: {latest}")  # Debugging output
-    if latest['GV2_column'] == 'green' and latest['GV3_strength'] == 'green':
-        return 'bull'
-    elif latest['GV2_column'] == 'red' and latest['GV3_strength'] == 'red':
-        return 'bear'
-    return 'none'
+    # Count the number of bullish and bearish weeks
+    bullish_weeks = weekly_df[(weekly_df['GV2_column'] == 'green') & (weekly_df['GV3_strength'] == 'green')].shape[0]
+    bearish_weeks = weekly_df[(weekly_df['GV2_column'] == 'red') & (weekly_df['GV3_strength'] == 'red')].shape[0]
+    
+    # Determine the overall trend based on the majority
+    total_weeks = len(weekly_df)
+    print(f"Bullish Weeks: {bullish_weeks}, Bearish Weeks: {bearish_weeks}, Total Weeks: {total_weeks}")
+    if bullish_weeks > bearish_weeks:
+        return bullish_weeks, bearish_weeks, 'bull'
+    elif bearish_weeks > bullish_weeks:
+        return bullish_weeks, bearish_weeks, 'bear'
+    else:
+        return bullish_weeks, bearish_weeks, 'none'
 
 # Pullback entry strategy for daily chart
 def pullback_entry(daily_df):
-    latest = daily_df.iloc[-1]
-    print(f"Latest Daily Data: {latest}")  # Debugging output
-    if latest['close'] <= latest['GV1_value_zone'] and latest['GV2_column'] == 'red' and latest['RSI'] < 30:
+    # Analyze the whole days of the defined period
+    recent_data = daily_df
+    
+    # Conditions for buy and sell signals
+    buy_conditions = (recent_data['close'] <= recent_data['GV1_value_zone']) & (recent_data['GV2_column'] == 'red') & (recent_data['RSI'] < 30)
+    sell_conditions = (recent_data['close'] >= recent_data['GV1_value_zone']) & (recent_data['GV2_column'] == 'green') & (recent_data['RSI'] > 70)
+    
+    # Count buy and sell signals
+    buy_signals = buy_conditions.sum()
+    sell_signals = sell_conditions.sum()
+
+    # Determine the action based on the signals
+    if buy_signals > sell_signals:
         return 'buy'
-    elif latest['close'] >= latest['GV1_value_zone'] and latest['GV2_column'] == 'green' and latest['RSI'] > 70:
+    elif sell_signals > buy_signals:
         return 'sell'
     return 'none'
 
-# Backtest strategy
+# Update visualization to show bullish, bearish, and mixed signals
+def plot_signals(daily_df, weekly_df):
+    fig = go.Figure()
+
+    # Add daily candlesticks
+    fig.add_trace(go.Candlestick(
+        x=daily_df['timestamp'],
+        open=daily_df['open'],
+        high=daily_df['high'],
+        low=daily_df['low'],
+        close=daily_df['close'],
+        name='Daily Candlesticks'
+    ))
+
+    # Add weekly close as a line
+    fig.add_trace(go.Scatter(x=weekly_df['timestamp'], y=weekly_df['close'], mode='lines', name='Weekly Close'))
+
+    # Highlight bullish weeks
+    for index, row in weekly_df.iterrows():
+        if row['GV2_column'] == 'green':
+            fig.add_shape(type="rect",
+                          x0=row['timestamp'] - pd.Timedelta(days=3),
+                          x1=row['timestamp'] + pd.Timedelta(days=3),
+                          y0=row['low'],
+                          y1=row['high'],
+                          fillcolor="green",
+                          opacity=0.2,
+                          layer="below",
+                          line_width=0)
+
+    # Highlight bearish weeks
+    for index, row in weekly_df.iterrows():
+        if row['GV2_column'] == 'red':
+            fig.add_shape(type="rect",
+                          x0=row['timestamp'] - pd.Timedelta(days=3),
+                          x1=row['timestamp'] + pd.Timedelta(days=3),
+                          y0=row['low'],
+                          y1=row['high'],
+                          fillcolor="red",
+                          opacity=0.2,
+                          layer="below",
+                          line_width=0)
+
+    fig.update_layout(title='Price Chart with Signals', xaxis_title='Date', yaxis_title='Price')
+    fig.show()
+
+def add_signals_to_chart(fig, daily_df, signal, entry_price, stop_loss, target_price):
+    # Add entry signal
+    fig.add_trace(go.Scatter(
+        x=[daily_df['timestamp'].iloc[-1]],
+        y=[entry_price],
+        mode='markers+text',
+        marker=dict(symbol='triangle-up' if signal == 'buy' else 'triangle-down', size=10, color='green' if signal == 'buy' else 'red'),
+        text=[f"{signal.capitalize()} Entry"],
+        textposition="top center",
+        name=f"{signal.capitalize()} Signal"
+    ))
+
+    # Add stop loss
+    fig.add_trace(go.Scatter(
+        x=[daily_df['timestamp'].iloc[-1]],
+        y=[stop_loss],
+        mode='markers+text',
+        marker=dict(symbol='x', size=10, color='blue'),
+        text=["Stop Loss"],
+        textposition="bottom center",
+        name="Stop Loss"
+    ))
+
+    # Add target price
+    fig.add_trace(go.Scatter(
+        x=[daily_df['timestamp'].iloc[-1]],
+        y=[target_price],
+        mode='markers+text',
+        marker=dict(symbol='circle', size=10, color='purple'),
+        text=["Target Price"],
+        textposition="top center",
+        name="Target Price"
+    ))
+
 def backtest_strategy(exchange, symbol, start_date, end_date, account_balance=10000, risk_per_trade=0.01):
     try:
         # Convert dates to timestamps
         start_timestamp = exchange.parse8601(start_date)
         end_timestamp = exchange.parse8601(end_date)
 
-        start_timestamp = pd.to_datetime(start_timestamp, unit='ms')
-        end_timestamp = pd.to_datetime(end_timestamp, unit='ms')
-
         # Fetch weekly and daily data
         weekly_df = fetch_historical_data(exchange, symbol, '1w', since=start_date)
         daily_df = fetch_historical_data(exchange, symbol, '1d', since=start_date)
 
-        # Filter data within the specified date range
-        weekly_df = weekly_df[(weekly_df['timestamp'] >= start_timestamp) & (weekly_df['timestamp'] <= end_timestamp)]
-        daily_df = daily_df[(daily_df['timestamp'] >= start_timestamp) & (daily_df['timestamp'] <= end_timestamp)]
+        # Convert timestamps to datetime
+        start_datetime = pd.to_datetime(start_timestamp, unit='ms')
+        end_datetime = pd.to_datetime(end_timestamp, unit='ms')
 
-        print(f"Weekly Data Range: {weekly_df['timestamp'].min()} to {weekly_df['timestamp'].max()}")  # Debugging output
-        print(f"Daily Data Range: {daily_df['timestamp'].min()} to {daily_df['timestamp'].max()}")      # Debugging output
+        # Filter data within the specified date range
+        weekly_df = weekly_df[(weekly_df['timestamp'] >= start_datetime) & (weekly_df['timestamp'] <= end_datetime)]
+        daily_df = daily_df[(daily_df['timestamp'] >= start_datetime) & (daily_df['timestamp'] <= end_datetime)]
 
         # Apply indicators
         weekly_df = apply_indicators(weekly_df)
         daily_df = apply_indicators(daily_df)
 
         # Identify trend
-        trend = identify_trend(weekly_df)
-        if trend == 'none':
-            print("No clear trend identified. Skipping trade.")
-            return
+        bullish_weeks, bearish_weeks, trend = identify_trend(weekly_df)
+        print(f"Overall Trend: {trend.capitalize()}")
+        
+        # Iterate through the entire DataFrame
+        for index in range(len(daily_df)):
+            signal = pullback_entry(daily_df.iloc[:index+1])
+            if signal == 'buy' or signal == 'sell':
+                print(f"{signal.capitalize()} signal identified.")
+                stop_loss = daily_df['low'].iloc[index] if signal == 'buy' else daily_df['high'].iloc[index]
+                entry_price = daily_df['close'].iloc[index]
+                target_price = entry_price + 2 * (entry_price - stop_loss) if signal == 'buy' else entry_price - 2 * (stop_loss - entry_price)
 
-        # Look for pullback entry
-        signal = pullback_entry(daily_df)
-        if signal == 'buy' or signal == 'sell':
-            print(f"{signal.capitalize()} signal identified.")
-            stop_loss = daily_df['low'].iloc[-1] if signal == 'buy' else daily_df['high'].iloc[-1]
-            entry_price = daily_df['close'].iloc[-1]
-            target_price = entry_price + 2 * (entry_price - stop_loss) if signal == 'buy' else entry_price - 2 * (stop_loss - entry_price)
+                # Position sizing
+                risk_amount = account_balance * risk_per_trade
+                position_size = risk_amount / abs(entry_price - stop_loss)
 
-            # Position sizing
-            risk_amount = account_balance * risk_per_trade
-            position_size = risk_amount / abs(entry_price - stop_loss)
+                print(f"Entry Price: {entry_price}, Stop Loss: {stop_loss}, Target Price: {target_price}")
+                print(f"Position Size: {position_size:.2f} units")
 
-            print(f"Entry Price: {entry_price}, Stop Loss: {stop_loss}, Target Price: {target_price}")
-            print(f"Position Size: {position_size:.2f} units")
+                # Save to CSV
+                with open('pullback_entries.csv', mode='a', newline='') as file:
+                    writer = csv.writer(file)
+                    writer.writerow([daily_df['timestamp'].iloc[index], signal, entry_price, stop_loss, target_price, position_size])
 
-        # Plot interactive graph
-        fig = go.Figure()
+        print("All entry signals have been saved to pullback_entries.csv")
 
-        # Add weekly close as a line
-        fig.add_trace(go.Scatter(x=weekly_df['timestamp'], y=weekly_df['close'], mode='lines', name='Weekly Close'))
-
-        # Add daily candlesticks
-        fig.add_trace(go.Candlestick(
-            x=daily_df['timestamp'],
-            open=daily_df['open'],
-            high=daily_df['high'],
-            low=daily_df['low'],
-            close=daily_df['close'],
-            name='Daily Candlesticks'
-        ))
-
-        # Add Bollinger Bands
-        fig.add_trace(go.Scatter(x=daily_df['timestamp'], y=daily_df['Bollinger_Upper'], mode='lines', name='Bollinger Upper'))
-        fig.add_trace(go.Scatter(x=daily_df['timestamp'], y=daily_df['Bollinger_Lower'], mode='lines', name='Bollinger Lower'))
-
-        fig.update_layout(title=f'{symbol} Price Chart', xaxis_title='Date', yaxis_title='Price')
-        fig.show()
+        # Plot signals
+        plot_signals(daily_df, weekly_df)
 
     except Exception as e:
         print(f"Error during backtesting: {e}")
 
+# Main execution
 if __name__ == "__main__":
     exchange = initialize_binance()
     symbol = 'BTC/USDT'
-
-    # Define your custom start and end dates for backtesting
-    start_date = '2024-01-01T00:00:00Z'  # Extended start date
-    end_date = '2025-01-30T00:00:00Z'    # End date
-
+    start_date = '2024-01-01T00:00:00Z'  
+    end_date = '2025-01-30T00:00:00Z'    
     print(f"Running backtest from {start_date} to {end_date}...")
     backtest_strategy(exchange, symbol, start_date, end_date)
