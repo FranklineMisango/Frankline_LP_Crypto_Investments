@@ -183,7 +183,7 @@ def add_signals_to_chart(fig, daily_df, signal, entry_price, stop_loss, target_p
         name="Target Price"
     ))
 
-def backtest_strategy(exchange, symbol, start_date, end_date, account_balance=10000, risk_per_trade=0.01):
+def backtest_strategy(exchange, symbol, start_date, end_date, account_balance=100, risk_per_trade=0.01):
     try:
         # Convert dates to timestamps
         start_timestamp = exchange.parse8601(start_date)
@@ -208,7 +208,10 @@ def backtest_strategy(exchange, symbol, start_date, end_date, account_balance=10
         # Identify trend
         bullish_weeks, bearish_weeks, trend = identify_trend(weekly_df)
         print(f"Overall Trend: {trend.capitalize()}")
-        
+
+        initial_balance = account_balance
+        total_profit = 0
+
         # Iterate through the entire DataFrame
         for index in range(len(daily_df)):
             signal = pullback_entry(daily_df.iloc[:index+1])
@@ -225,10 +228,25 @@ def backtest_strategy(exchange, symbol, start_date, end_date, account_balance=10
                 print(f"Entry Price: {entry_price}, Stop Loss: {stop_loss}, Target Price: {target_price}")
                 print(f"Position Size: {position_size:.2f} units")
 
+                # Calculate profit or loss
+                if signal == 'buy':
+                    profit = (target_price - entry_price) * position_size
+                else:
+                    profit = (entry_price - target_price) * position_size
+
+                total_profit += profit
+                account_balance += profit
+
                 # Save to CSV
                 with open('pullback_entries.csv', mode='a', newline='') as file:
                     writer = csv.writer(file)
-                    writer.writerow([daily_df['timestamp'].iloc[index], signal, entry_price, stop_loss, target_price, position_size])
+                    writer.writerow([daily_df['timestamp'].iloc[index], signal, entry_price, stop_loss, target_price, position_size, profit])
+
+        # Calculate percentage profit
+        percentage_profit = (total_profit / initial_balance) * 100
+
+        print(f"Total Profit: {total_profit:.2f}")
+        print(f"Percentage Profit: {percentage_profit:.2f}%")
 
         print("All entry signals have been saved to pullback_entries.csv")
 
@@ -238,7 +256,6 @@ def backtest_strategy(exchange, symbol, start_date, end_date, account_balance=10
     except Exception as e:
         print(f"Error during backtesting: {e}")
 
-# Main execution
 if __name__ == "__main__":
     exchange = initialize_binance()
     symbol = 'BTC/USDT'
