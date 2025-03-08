@@ -11,7 +11,7 @@ import pytz
 
 class SwingHigh():
     def __init__(self):
-        self.exchange = ccxt.binance()
+        self.exchange = ccxt.okx()
         self.initial_gains = {}
         self.data = {}
         self.order_numbers = {}
@@ -26,6 +26,9 @@ class SwingHigh():
         print(f"Fetching coin prices from binance from {hours} hour(s) ago to now which is {now} HKT")
         since = int((now - timedelta(hours=hours)).timestamp() * 1000)
         markets = self.exchange.load_markets()
+        
+        #markets = ['PI/USDT']
+
         volatile_tickers = []
 
         for symbol in markets:

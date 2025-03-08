@@ -221,6 +221,7 @@ class ScalpingStrategy:
             self.shares_per_ticker[symbol] = 0  # Reset the shares per ticker
         except Exception as e:
             self.log_message(f"Error selling {shares} coins of {symbol}: {e}")
+    
     def run_live_trading(self, duration_minutes):
         print("Starting Scalping live trading strategy ...")
         account_info = self.client.account()['balances']
@@ -252,7 +253,7 @@ class ScalpingStrategy:
                 loss = (buy_price - last_price) / buy_price
 
                 if profit >= self.profit_threshold:
-                    self.sell_order(self.quantity)
+                    self.sell_all(self.quantity)
                     self.portfolio_value = self.quantity * last_price
                     portfolio_values.append(self.portfolio_value)  # Update portfolio value
                     print(f"Trade closed with profit: {profit * 100:.2f}%")
@@ -261,7 +262,7 @@ class ScalpingStrategy:
                     buy_price = None
                     self.position = 0
                 elif loss >= self.stop_loss_threshold:
-                    self.sell_order(self.quantity)
+                    self.sell_all(self.quantity)
                     self.portfolio_value = self.quantity * last_price
                     portfolio_values.append(self.portfolio_value)  # Update portfolio value
                     print(f"Trade closed with loss: {loss * 100:.2f}%")
@@ -272,7 +273,7 @@ class ScalpingStrategy:
 
         # Sell all positions before ending the live trading
         if self.position == 1:
-            self.sell_order(self.quantity)
+            self.final_sell_everything_before_ending(self.quantity)
 
         print(f"Final portfolio value: {self.portfolio_value}")
         print(f"Closing live trading at time {dt.now()}") 
