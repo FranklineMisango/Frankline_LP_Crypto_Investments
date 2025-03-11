@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from datetime import datetime as dt
 from datetime import timedelta
-import csv
+import pandas as pd
 import timeit
 
 class data_fetcher():
@@ -43,30 +43,40 @@ class data_fetcher():
         if not data:
             human_readable_since = self.convert_timestamp_ms_to_human_readable(since)
             print(f"No data fetched for {symbol} since {human_readable_since}")
-            return []
+            return pd.DataFrame()
 
         # Fetch the last price for the previous second
         last_price_data = self.get_data(symbol, int(dt.now().timestamp() * 1000) - 2000, timeframe)
         last_price = last_price_data[-1][4] if last_price_data else data[0][4]
         
-        # Save a csv with an additional column named 'last_price' and the last price of the ticker
-        with open('data.csv', 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['timestamp', 'open', 'high', 'low', 'close', 'volume', 'last_price'])
-            for row in data:
-                row.append(last_price)
-                writer.writerow(row)
-                last_price = row[4]  # Update last price to current row's close price
-                
-        return data
-
-# List of symbols to fetch data for
+        # Create a DataFrame with an additional column named 'last_price' and the last price of the ticker
+        df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['last_price'] = last_price
+        
+        return df
 
 # Start the timer
 start_time = timeit.default_timer()
-symbol = "BTC/USDT"
 fetcher = data_fetcher()
-user_defined_time_frame = int((dt.now() - timedelta(hours=1)).timestamp() * 1000)
-fetched_data = fetcher.dynamic_pricing(symbol, user_defined_time_frame, timeframe='1s')  
+#markets = fetcher.exchange.load_markets()
+markets = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "ADA/USDT", "SOL/USDT", "DOT/USDT", "DOGE/USDT", "UNI/USDT", "LUNA/USDT", "LINK/USDT"]
+symbols_to_fetch = [symbol for symbol in markets if '/USDT' in symbol]
+
+# Create a dictionary to hold DataFrames for each symbol
+data_frames = {}
+
+for symbol in symbols_to_fetch:
+    user_defined_time_frame = int((dt.now() - timedelta(hours=1)).timestamp() * 1000)
+    df = fetcher.dynamic_pricing(symbol, user_defined_time_frame, timeframe='1s')
+    if not df.empty:
+        data_frames[symbol] = df
+
+# Save all DataFrames to an Excel file with multiple sheets
+with pd.ExcelWriter('data.xlsx') as writer:
+    for symbol, df in data_frames.items():
+        sheet_name = symbol.replace("/", "_")
+        df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+
 elapsed = timeit.default_timer() - start_time
-print(f"Data Fetching completed in {elapsed:.2f} seconds.")
+print(f"Data Fetching for {symbol} completed in {elapsed:.2f} seconds.")
