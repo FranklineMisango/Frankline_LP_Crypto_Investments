@@ -4,6 +4,7 @@ load_dotenv()
 from datetime import datetime as dt
 from datetime import timedelta
 import csv
+import timeit
 
 class data_fetcher():
 
@@ -31,6 +32,11 @@ class data_fetcher():
     def dynamic_pricing(self, symbol, since, timeframe='1s'):
         data = self.get_data(symbol, since, timeframe)
         
+        if not data:
+            human_readable_since = self.convert_timestamp_ms_to_human_readable(since)
+            print(f"No data fetched for {symbol} since {human_readable_since}")
+            return []
+
         # Fetch the last price for the previous second
         last_price_data = self.get_data(symbol, int(dt.now().timestamp() * 1000) - 2000, timeframe)
         last_price = last_price_data[-1][4] if last_price_data else data[0][4]
@@ -46,9 +52,13 @@ class data_fetcher():
                 
         return data
 
+# List of symbols to fetch data for
 
-data_fetcher = data_fetcher()
-symbol = 'BTC/USDT'
-user_defined_time_frame = int((dt.now() - timedelta(minutes=1)).timestamp() * 1000)
-fetched_data = data_fetcher.dynamic_pricing(symbol, user_defined_time_frame, timeframe='1s')
-print(fetched_data)
+# Start the timer
+start_time = timeit.default_timer()
+symbol = "BTC/USDT"
+fetcher = data_fetcher()
+user_defined_time_frame = int((dt.now() - timedelta(hours=1)).timestamp() * 1000)
+fetched_data = fetcher.dynamic_pricing(symbol, user_defined_time_frame, timeframe='1s')  
+elapsed = timeit.default_timer() - start_time
+print(f"Data Fetching completed in {elapsed:.2f} seconds.")
