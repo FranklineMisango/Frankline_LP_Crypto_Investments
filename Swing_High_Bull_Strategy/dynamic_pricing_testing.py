@@ -18,15 +18,23 @@ class data_fetcher():
         dt_object = dt.fromtimestamp(timestamp_s)
         return dt_object.strftime('%Y-%m-%d %H:%M:%S')
 
-    # Fetch data for a given timeframe since a specific time
-    def get_data(self, symbol, since, timeframe='1s'):
-        data = self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since)
+    # Fetch data for a given timeframe since a specific time with pagination
+    def get_data(self, symbol, since, timeframe='1s', limit=1000):
+        all_data = []
+        while True:
+            data = self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=limit)
+            if not data:
+                break
+            all_data.extend(data)
+            since = data[-1][0] + 1  # Move to the next timestamp
+            if len(data) < limit:
+                break
 
         # Convert timestamps to human-readable format
-        for row in data:
+        for row in all_data:
             row[0] = self.convert_timestamp_ms_to_human_readable(row[0])
 
-        return data
+        return all_data
     
     # Dynamic tracking of the seconds data from get_data and dynamically making it as the last price of that ticker
     def dynamic_pricing(self, symbol, since, timeframe='1s'):
