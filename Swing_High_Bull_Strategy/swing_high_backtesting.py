@@ -27,6 +27,7 @@ class SwingHigh():
         print(f"Fetching coin prices from {self.exchange} from {hours} hour(s) ago to now which is {now} HKT")
         since = int((now - timedelta(hours=hours)).timestamp() * 1000)
         markets = self.exchange.load_markets()
+        #markets = ["BTC/USDT", "ETH/USDT"]
         
         #markets = ['PI/USDT']
 
@@ -78,13 +79,13 @@ class SwingHigh():
     def get_position(self, symbol):
         return self.positions.get(symbol, False)
 
+    #TODO - problematic logic for last price - should be the last price of the candle. ie if the price at 12.00 is 100 and at 12.01 is 101, the last price should be 101 and not at the dt.now price
     def get_last_price(self, symbol):
         return self.exchange.fetch_ticker(symbol)['last']
     
     def sell_all(self, symbol, entry_price):
         current_price = self.get_last_price(symbol)
         if self.get_position(symbol):
-            # TODO - Redefine the logic for selling and work on whether should follow volatilty or the backtest sale logic
             dropping_price =  entry_price * 0.995
             higher_than_earlier_price = entry_price * 1.015
             if current_price < dropping_price or current_price >= higher_than_earlier_price:
