@@ -35,7 +35,7 @@ class SwingHigh():
         tickers = self.exchange.fetch_tickers()
         filtered_tickers = [ticker for ticker in tickers.values() if ticker['percentage'] is not None]
         sorted_tickers = sorted(filtered_tickers, key=lambda x: x['percentage'], reverse=True)
-        top_gainers = [ticker['symbol'] for ticker in sorted_tickers[:20]]
+        top_gainers = [ticker['symbol'] for ticker in sorted_tickers[:50]]
         return top_gainers
 
     async def convert_timestamp_ms_to_human_readable(self, timestamp_ms):
@@ -80,7 +80,7 @@ class SwingHigh():
         return data
 
     async def fetch_and_save_data(self, symbol, writer):
-        user_defined_time_frame = int((dt.now() - timedelta(hours=24)).timestamp() * 1000)
+        user_defined_time_frame = int((dt.now() - timedelta(hours=1)).timestamp() * 1000)
         fetched_data = await self.dynamic_pricing(symbol, user_defined_time_frame, timeframe='1s')
 
         # Convert the fetched data to a DataFrame
@@ -104,14 +104,6 @@ class SwingHigh():
             gains[i] = (current_prices[i] - initial_prices[i]) / initial_prices[i] * 100
         return gains
 
-    async def load_volatile_tickers_excel_file(self, file_path="data.xlsx"):
-        try:
-            df = pd.read_excel(file_path)
-            return df
-        except Exception as e:
-            print(f"An error occurred while loading the Excel file: {e}")
-            return None
-
     async def fetch_the_volatile_cryptocurrencies(self, hours):
         start_time = timeit.default_timer()
         top_gainers_list = await self.find_top_gainers()
@@ -127,70 +119,74 @@ class SwingHigh():
             if not writer.book.sheetnames:
                 writer.book.create_sheet("Sheet1")
 
-    async def load_volatile_tickers_excel_file(self, file_path="data.xlsx"):
-        try:
-            # Load the Excel file
-            excel_data = pd.ExcelFile(file_path)
-            
-            # Initialize lists to store the data
-            volatile_tickers = []
-            initial_prices = []
-            current_prices = []
-            symbols = []
+    async def load_volatile_tickers_excel_file(self, file_path):
+      try:
+          # Load the Excel file
+          excel_data = pd.ExcelFile(file_path)
+          
+          # Initialize lists to store the data
+          volatile_tickers = []
+          initial_prices = []
+          current_prices = []
+          symbols = []
+          
+          since = int((dt.now() - timedelta(hours=1)).timestamp() * 1000) # CHANGE HERE AS WELL TO 1 HR
 
-            # Iterate through each sheet in the Excel file
-            for sheet_name in excel_data.sheet_names:
-                # Load the sheet into a DataFrame
-                df = pd.read_excel(file_path, sheet_name=sheet_name)
-                
-                # Extract the necessary information
-                latest_price = df['latest price'].iloc[-1]
-                close_price = df['close'].iloc[-1]
-                
-                # Append the data to the respective lists
-                volatile_tickers.append(sheet_name)
-                initial_prices.append(latest_price)
-                current_prices.append(close_price)
-                symbols.append(sheet_name.split('_')[0])  # Assuming the symbol is the part before '_USDT'
+          # Iterate through each sheet in the Excel file
+          for sheet_name in excel_data.sheet_names:
+              # Load the sheet into a DataFrame
+              df = pd.read_excel(file_path, sheet_name=sheet_name)
+              
+              # Extract the necessary information
+              latest_price = df['last_price'].iloc[-1]
+              close_price = df['close'].iloc[-1]
+              
+              # Append the data to the respective lists
+              volatile_tickers.append({
+                  'symbol': sheet_name,
+                  'initial_price': latest_price,
+                  'current_price': close_price,
+                  '%change': (close_price - latest_price) / latest_price * 100,
+                  'num_trades': 0  # Initialize num_trades with 0
+              })
+              initial_prices.append(latest_price)
+              current_prices.append(close_price)
+              symbols.append(sheet_name.split('_')[0])  # Assuming the symbol is the part before '_USDT'
 
-            # Convert to CuPy arrays for GPU processing
-            initial_prices = cp.array(initial_prices, dtype=cp.float32)
-            current_prices = cp.array(current_prices, dtype=cp.float32)
-            gains = cp.zeros_like(initial_prices)
+          # Convert to CuPy arrays for GPU processing
+          initial_prices = cp.array(initial_prices, dtype=cp.float32)
+          current_prices = cp.array(current_prices, dtype=cp.float32)
+          gains = cp.zeros_like(initial_prices)
 
-            threads_per_block = 128
-            blocks_per_grid = (initial_prices.size + (threads_per_block - 1)) // threads_per_block
-            self.calculate_gains[blocks_per_grid, threads_per_block](initial_prices, current_prices, gains)
+          threads_per_block = 128
+          blocks_per_grid = (initial_prices.size + (threads_per_block - 1)) // threads_per_block
+          self.calculate_gains[blocks_per_grid, threads_per_block](initial_prices, current_prices, gains)
 
-            # Copy gains back to CPU from GPU
-            gains = cp.asnumpy(gains)
+          # Copy gains back to CPU from GPU
+          gains = cp.asnumpy(gains)
 
-            for i, symbol in enumerate(symbols):
-                gain = gains[i]
-                num_trades = self.exchange.fetch_trades(symbol, since=since)
-                if gain >= 2:
-                    volatile_tickers.append({
-                        'symbol': symbol,
-                        'initial_price': initial_prices[i],
-                        'current_price': current_prices[i],
-                        '%change': gain,
-                        'num_trades': num_trades
-                    })
-                    self.initial_gains[symbol] = gain
-                elif symbol in self.initial_gains and gain < self.initial_gains[symbol] * 0.95:
-                    volatile_tickers = [ticker for ticker in volatile_tickers if ticker['symbol'] != symbol]
-                    del self.initial_gains[symbol]
+          for i, symbol in enumerate(symbols):
+              gain = gains[i]
+              edited_symbol = symbol + '/USDT'
+              num_trades = self.exchange.fetch_trades(edited_symbol, since=since)
+              volatile_tickers[i]['num_trades'] = len(num_trades)  # Update num_trades with the actual number of trades
+              if gain >= 2:
+                  self.initial_gains[symbol] = gain
+              elif symbol in self.initial_gains and gain < self.initial_gains[symbol] * 0.95:
+                  volatile_tickers = [ticker for ticker in volatile_tickers if ticker['symbol'] != symbol]
+                  del self.initial_gains[symbol]
 
-            volatile_tickers.sort(key=lambda x: x['%change'], reverse=True)
-            with open('volatile_tickers.csv', 'w') as f:
-                writer = csv.writer(f)
-                writer.writerow(['symbol', 'initial_price', 'current_price', '%change', 'num_trades'])
-                for ticker in volatile_tickers:
-                    writer.writerow([ticker['symbol'], ticker['initial_price'], ticker['current_price'], ticker['%change'], ticker['num_trades']])
-            return volatile_tickers
-        except Exception as e:
-            print(f"An error occurred while loading the Excel file: {e}")
-            return None
+          volatile_tickers.sort(key=lambda x: x['%change'], reverse=True)
+          with open('volatile_tickers.csv', 'w') as f:
+              writer = csv.writer(f)
+              writer.writerow(['symbol', 'initial_price', 'current_price', '%change', 'num_trades'])
+              for ticker in volatile_tickers:
+                  writer.writerow([ticker['symbol'], ticker['initial_price'], ticker['current_price'], ticker['%change'], ticker['num_trades']])
+          return volatile_tickers
+
+      except Exception as e:
+          print(f"An error occurred while loading the Excel file: {e}")
+          return None
 
     async def log_message(self, message):
         print(message)
@@ -202,12 +198,18 @@ class SwingHigh():
         return self.positions.get(symbol, False)
 
     async def get_last_price(self, symbol):
-        current_price = await self.load_volatile_tickers_excel_file(symbol=symbol)
-        return current_price
+        try:
+            excel_data = pd.ExcelFile('data.xlsx')
+            df = pd.read_excel('data.xlsx', sheet_name=symbol.replace('/', '_'))
+            current_price = df['last_price'].iloc[-1]
+            return current_price
+        except Exception as e:
+            print(f"An error occurred while fetching the last price for {symbol}: {e}")
+            return None
 
-    def sell_all(self, symbol, entry_price):
-        current_price = self.get_last_price(symbol)
-        if self.get_position(symbol):
+    async def sell_all(self, symbol, entry_price):
+        current_price = await self.get_last_price(symbol)
+        if current_price is not None and await self.get_position(symbol):
             dropping_price = entry_price * 0.995
             higher_than_earlier_price = entry_price * 1.015
             if current_price < dropping_price or current_price >= higher_than_earlier_price:
@@ -215,11 +217,12 @@ class SwingHigh():
                 sale_value = shares * current_price
                 sale_value -= sale_value * self.fees  # Subtract fees
                 self.portfolio_value += sale_value
-                self.log_message(f"Selling all for {symbol} at {current_price} ")
+                await self.log_message(f"Selling all for {symbol} at {current_price}")
                 self.positions[symbol] = False
 
     async def run_backtest(self):
-        volatile_tickers = await self.fetch_the_volatile_cryptocurrencies(hours=1)
+        fetch_Caller = await self.fetch_the_volatile_cryptocurrencies(hours=1) # Fetch for 1 HOUR
+        volatile_tickers = await self.load_volatile_tickers_excel_file(file_path="data.xlsx")
         if volatile_tickers is None:
             print("No volatile tickers found.")
             return
@@ -249,12 +252,12 @@ class SwingHigh():
                     entry_price = self.data[symbol][0] if symbol in self.data and self.data[symbol] else current_price
                     self.data[symbol].append(current_price)
                     if current_price < entry_price * 0.995 or current_price >= entry_price * 1.015:
-                        self.sell_all(symbol, entry_price)
+                        await self.sell_all(symbol, entry_price)
 
         # Sell everything at the end of the backtest
         for symbol in self.symbols:
             if await self.get_position(symbol):
-                self.sell_all(symbol, self.data[symbol][0])
+                await self.sell_all(symbol, self.data[symbol][0])
 
         # Calculate final portfolio value
         final_portfolio_value = 0
