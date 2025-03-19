@@ -1,84 +1,70 @@
 import ccxt
-from datetime import datetime as dt
-from datetime import timedelta
-import pandas as pd
-import timeit
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from prettytable import PrettyTable
+import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
-class data_fetcher():
-
+class FindTopGainers():
     def __init__(self):
         self.exchange = ccxt.binance()
-        self.initial_gains = {}
         self.data = {}
+        self.top_gainers = []
+        self.lock = threading.Lock()
 
-    def convert_timestamp_ms_to_human_readable(self, timestamp_ms):
-        timestamp_s = timestamp_ms / 1000.0
-        dt_object = dt.fromtimestamp(timestamp_s)
-        return dt_object.strftime('%Y-%m-%d %H:%M:%S')
+    def fetch_recent_trades(self, symbol):
+        since = self.exchange.milliseconds() - 5 * 60 * 1000  # 5 minutes ago
+        trades = self.exchange.fetch_trades(symbol, since=since)
+        return trades
 
-    # Fetch data for a given timeframe since a specific time with pagination
-    def get_data(self, symbol, since, timeframe='1s', limit=1000):
-        all_data = []
-        while True:
-            data = self.exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=limit)
-            if not data:
-                break
-            all_data.extend(data)
-            since = data[-1][0] + 1  # Move to the next timestamp
-            if len(data) < limit:
-                break
+    def calculate_percentage_change(self, trades):
+        if not trades:
+            return 0
+        start_price = trades[0]['price']
+        end_price = trades[-1]['price']
+        percentage_change = ((end_price - start_price) / start_price) * 100
+        return percentage_change
 
-        # Convert timestamps to human-readable format
-        for row in all_data:
-            row[0] = self.convert_timestamp_ms_to_human_readable(row[0])
+    def find_top_gainers(self):
+        tickers = self.exchange.fetch_tickers()
+        symbols = [ticker['symbol'] for ticker in tickers.values() if ticker['percentage'] is not None and '/USDT' in ticker['symbol']]
+        percentage_changes = []
 
-        return all_data
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(self.fetch_recent_trades, symbol): symbol for symbol in symbols}
+            for future in futures:
+                symbol = futures[future]
+                trades = future.result()
+                percentage_change = self.calculate_percentage_change(trades)
+                percentage_changes.append((symbol, tickers[symbol]['last'], percentage_change))
 
-    # Dynamic tracking of the seconds data from get_data and dynamically making it as the last price of that ticker
-    def dynamic_pricing(self, symbol, since, timeframe='1s'):
-        data = self.get_data(symbol, since, timeframe)
+        sorted_tickers = sorted(percentage_changes, key=lambda x: x[2], reverse=True)
+        with self.lock:
+            self.top_gainers = sorted_tickers[:5]
 
-        if not data:
-            human_readable_since = self.convert_timestamp_ms_to_human_readable(since)
-            print(f"No data fetched for {symbol} since {human_readable_since}")
-            return []
+    def display_top_gainers(self):
+        with self.lock:
+            table = PrettyTable()
+            table.field_names = ["Symbol", "Price", "Percentage Change (5 min)"]
+            for ticker in self.top_gainers:
+                table.add_row([ticker[0], ticker[1], ticker[2]])
+            print(table)
 
-        # Fetch the last price for the previous second
-        last_price_data = self.get_data(symbol, int(dt.now().timestamp() * 1000) - 2000, timeframe)
-        last_price = last_price_data[-1][4] if last_price_data else data[0][4]
+    def run(self, duration_minutes):
+        end_time = time.time() + duration_minutes * 60
+        def update_gainers():
+            while time.time() < end_time:
+                self.find_top_gainers()
+                time.sleep(1)  # Check every second
 
-        # Add an additional column named 'last_price' with the last price of the ticker
-        for row in data:
-            row.append(last_price)
-            last_price = row[4]  # Update last price to current row's close price
+        update_thread = threading.Thread(target=update_gainers)
+        update_thread.start()
 
-        return data
+        while time.time() < end_time:
+            self.display_top_gainers()
+            time.sleep(1)  # Display every second
 
-def fetch_and_save_data(symbol, fetcher, writer):
-    user_defined_time_frame = int((dt.now() - timedelta(hours=24)).timestamp() * 1000)
-    fetched_data = fetcher.dynamic_pricing(symbol, user_defined_time_frame, timeframe='1s')
-    
-    # Convert the fetched data to a DataFrame
-    df = pd.DataFrame(fetched_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'last_price'])
-    
-    # Write the DataFrame to a sheet named after the symbol
-    df.to_excel(writer, sheet_name=symbol.replace('/', '_'), index=False)
+        update_thread.join()
 
-# List of symbols to fetch data for
-
-# Start the timer
-start_time = timeit.default_timer()
-Fetch_top_tickers = FindTopGainers()
-top_gainers_list = Fetch_top_tickers.find_top_gainers()
-
-# Create a Pandas Excel writer using openpyxl as the engine
-with pd.ExcelWriter('data.xlsx', engine='openpyxl') as writer:
-    fetcher = data_fetcher()
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(fetch_and_save_data, symbol, fetcher, writer) for symbol in top_gainers_list if '/USDT' in symbol]
-        for future in as_completed(futures):
-            future.result()  # Wait for all futures to complete
-
-    elapsed = timeit.default_timer() - start_time
-    print(f"Data Fetching completed in {elapsed:.2f} seconds.")
+if __name__ == "__main__":
+    strategy = FindTopGainers()
+    strategy.run(duration_minutes=10)  # Run the algorithm for 10 minutes
