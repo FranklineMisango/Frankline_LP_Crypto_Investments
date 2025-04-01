@@ -4,6 +4,8 @@ import time
 import plotly.graph_objects as go
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+import pytz
+from datetime import timedelta
 
 class ScalpingStrategy:
     def __init__(self, symbol, initial_portfolio_value=10, profit_threshold=0.001, stop_loss_threshold=0.001):
@@ -64,7 +66,6 @@ class ScalpingStrategy:
         print("All times are in UTC")
         self.data = self.get_minute_data(start_date, end_date)
         print("Data Fetched successfully")
-        print(self.data.head())
         buy_price = None
         highest_price = None
         portfolio_values = [self.portfolio_value]  # Track portfolio value over time
@@ -193,9 +194,19 @@ class ScalpingStrategy:
 
 
 if __name__ == "__main__":
-    symbol = 'CLV/USDT'
-    start_date_str = '2025-01-21 00:00'
-    end_date_str = '2025-01-22 20:40'
+    symbol = 'BTC/USDT'
+    hkt = pytz.timezone('Asia/Hong_Kong')
+    utc = pytz.utc
+
+    print(f"The code runs in your local time equivalent but all times are in UTC")
+    # Start date is 1 hour before the current time in HKT
+    #Change the hours below to your desired start time and even chage hours to days
+    start_date_hkt = datetime.now(hkt) - timedelta(days=365)
+    start_date_utc = start_date_hkt.astimezone(utc)
+    start_date_str = start_date_utc.strftime('%Y-%m-%d %H:%M')
+    end_date_hkt = datetime.now(hkt)
+    end_date_utc = end_date_hkt.astimezone(utc)
+    end_date_str = end_date_utc.strftime('%Y-%m-%d %H:%M')
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d %H:%M')
     end_date = datetime.strptime(end_date_str, '%Y-%m-%d %H:%M')
     strategy = ScalpingStrategy(symbol)
