@@ -13,7 +13,16 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 import csv
-
+import dash
+from dash import dcc, html
+from dash.dependencies import Input, Output
+import plotly.graph_objs as go
+import pandas as pd
+import threading
+import time
+import os
+import json
+from datetime import datetime
 API_KEY = os.environ.get('APCA_API_KEY_ID')
 API_SECRET = os.environ.get('APCA_API_SECRET_KEY')
 APCA_API_BASE_URL = "https://paper-api.alpaca.markets"
@@ -78,6 +87,26 @@ class LongShort:
                 tRebalance.start()
                 tRebalance.join()
                 time.sleep(60)
+
+            
+    def submit_order_with_retry(self, qty, stock, side, max_retries=3):
+        """Submit order with retry logic"""
+        if qty <= 0:
+            return False
+            
+        for attempt in range(max_retries):
+            try:
+                self.alpaca.submit_order(stock, qty, side, "market", "day")
+                print(f"Market order of | {qty} {stock} {side} | completed.")
+                self.orders_log.append([stock, qty, side, "completed", datetime.datetime.now()])
+                return True
+            except Exception as e:
+                print(f"Order attempt {attempt+1}/{max_retries} failed: {qty} {stock} {side}: {e}")
+                if attempt == max_retries - 1:
+                    self.orders_log.append([stock, qty, side, f"failed after {max_retries} attempts: {e}", 
+                                        datetime.datetime.now()])
+                    return False
+                time.sleep(1)  # Brief pause before retry
 
     def awaitMarketOpen(self):
         isOpen = self.alpaca.get_clock().is_open
