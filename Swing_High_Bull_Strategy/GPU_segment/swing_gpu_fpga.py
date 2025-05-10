@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import matplotlib.pyplot as plt
 nest_asyncio.apply()
 from openpyxl import Workbook
+import PrettyTable
 
 class data_fetcher():
     def __init__(self):
