@@ -1,6 +1,6 @@
 import json
-import websocket
 import asyncio
+import websockets
 import hmac
 import hashlib
 import time
@@ -36,7 +36,7 @@ class BinanceWebsocketClient:
                     except asyncio.TimeoutError:
                         logger.warning(f"Ping timeout on {stream_name}, reconnecting...")
                         break
-                except websocket.exceptions.ConnectionClosed:
+                except websockets.exceptions.ConnectionClosed:
                     logger.warning(f"Connection closed for {stream_name}, reconnecting...")
                     break
         finally:
@@ -59,7 +59,7 @@ class BinanceWebsocketClient:
             logger.warning(f"Already connected to {stream_name}")
             return
 
-        ws = await websocket.connect(f"{self.base_endpoint}/{stream_name}")
+        ws = await websockets.connect(f"{self.base_endpoint}/{stream_name}")
         self.connections[stream_name] = ws
         asyncio.create_task(self._listen_forever(ws, stream_name))
         logger.info(f"Connected to {stream_name}")
@@ -67,7 +67,7 @@ class BinanceWebsocketClient:
     async def connect_to_multiple_streams(self, streams):
         """Connect to multiple streams at once using the combined stream."""
         streams_str = '/'.join(streams)
-        ws = await websocket.connect(f"{self.stream_endpoint}?streams={streams_str}")
+        ws = await websockets.connect(f"{self.stream_endpoint}?streams={streams_str}")
         
         for stream in streams:
             self.connections[stream] = ws

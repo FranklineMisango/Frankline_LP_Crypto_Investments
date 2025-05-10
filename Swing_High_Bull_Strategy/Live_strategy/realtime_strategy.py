@@ -1,4 +1,4 @@
-import ccxt
+import ccxt.async_support as ccxt_async  
 import asyncio
 import pandas as pd
 import numpy as np
@@ -33,7 +33,7 @@ class SwingHighRealtime:
         
         # Initialize exchange
         if api_key and api_secret:
-            self.exchange = ccxt.binance({
+            self.exchange = ccxt_async.binance({
                 'apiKey': api_key,
                 'secret': api_secret,
                 'enableRateLimit': True,
@@ -42,8 +42,8 @@ class SwingHighRealtime:
                 }
             })
         else:
-            self.exchange = ccxt.binance({'enableRateLimit': True})
-        
+            self.exchange = ccxt_async.binance({'enableRateLimit': True})
+
         # Initialize websocket client
         self.ws_client = BinanceWebsocketClient(api_key, api_secret)
         
@@ -561,8 +561,7 @@ class SwingHighRealtime:
         
         # Close websocket connections
         await self.ws_client.close_all()
-        
-        # Close exchange connection if needed
+        await self.exchange.close()
         
         logger.info("Cleanup complete")
 
