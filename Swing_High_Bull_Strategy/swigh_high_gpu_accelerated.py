@@ -1,60 +1,105 @@
 import ccxt
-from dotenv import load_dotenv
-load_dotenv()
-from datetime import datetime as dt
-from datetime import timedelta
-import csv
-import time
+import numpy as np
+import cupy as cp
+from numba import cuda, njit
 import timeit
+import csv
+from datetime import datetime as dt, timedelta
 import pytz
+import asyncio
+import aiohttp
 
 class SwingHigh():
     def __init__(self):
-        self.exchange = ccxt.binance()
+        self.exchange = ccxt.okx()
         self.initial_gains = {}
         self.data = {}
         self.order_numbers = {}
         self.shares_per_ticker = {}
         self.positions = {}
         self.portfolio_value = 1000  # Initial portfolio value
-        self.fees = 0.1/100  # Binance trading fee (0.1%)
+        self.fees = 0.006  # Trading fee (0.6%)
 
-    def fetch_the_volatile_cryptocurrencies(self, hours):
+    @staticmethod
+    @cuda.jit
+    def calculate_gains(initial_prices, current_prices, gains):
+        idx = cuda.grid(1)
+        if idx < initial_prices.size:
+            gains[idx] = (current_prices[idx] - initial_prices[idx]) / initial_prices[idx] * 100
+
+    @staticmethod
+    @njit
+    def process_data(initial_prices, current_prices):
+        gains = np.zeros_like(initial_prices, dtype=np.float32)
+        for i in range(initial_prices.size):
+            gains[i] = (current_prices[i] - initial_prices[i]) / initial_prices[i] * 100
+        return gains
+
+    async def fetch_data(self, symbol, since):
+        loop = asyncio.get_event_loop()
+        async with aiohttp.ClientSession() as session:
+            try:
+                data = await loop.run_in_executor(None, self.get_minute_data, symbol, since)
+                return data
+            except Exception as e:
+                print(f"Error fetching data for {symbol}: {e}")
+                return None
+
+    async def fetch_all_data(self, symbols, since):
+        tasks = [self.fetch_data(symbol, since) for symbol in symbols]
+        return await asyncio.gather(*tasks)
+
+    async def fetch_the_volatile_cryptocurrencies(self, hours):
         hkt = pytz.timezone('Asia/Hong_Kong')
         now = dt.now(hkt)
-        print(f"Fetching coin prices from {self.exchange} from {hours} hour(s) ago to now which is {now} HKT")
+        print(f"Fetching coin prices from Binance from {hours} hour(s) ago to now which is {now} HKT")
         since = int((now - timedelta(hours=hours)).timestamp() * 1000)
-        markets = self.exchange.load_markets()
-        #markets = ["BTC/USDT", "ETH/USDT"]
-        
-        #markets = ['PI/USDT']
-
+        #markets = self.exchange.load_markets()
+        markets = ["BTC/USDT", "ETH/USDT"]
         volatile_tickers = []
 
-        for symbol in markets:
-            if '/USDT' in symbol:
-                try:
-                    data = self.get_minute_data(symbol, since)
-                    if data:
-                        initial_price = data[0][1]  # Opening price hours ago
-                        current_price = data[-1][4]  # Closing price now
-                        gain = (current_price - initial_price) / initial_price * 100
-                        num_trades = self.exchange.fetch_trades(symbol, since=since)
+        initial_prices = []
+        current_prices = []
+        symbols = []
 
-                        if gain >= 2:
-                            volatile_tickers.append({
-                                'symbol': symbol,
-                                'initial_price': initial_price,
-                                'current_price': current_price,
-                                '%change': gain,
-                                'num_trades': num_trades
-                            })
-                            self.initial_gains[symbol] = gain
-                        elif symbol in self.initial_gains and gain < self.initial_gains[symbol] * 0.95:
-                            volatile_tickers = [ticker for ticker in volatile_tickers if ticker['symbol'] != symbol]
-                            del self.initial_gains[symbol]
-                except ccxt.BaseError as e:
-                    print(f"Error fetching data for {symbol}: {e}")
+        # Fetch data asynchronously
+        symbols_to_fetch = [symbol for symbol in markets if '/USDT' in symbol]
+        data_list = await self.fetch_all_data(symbols_to_fetch, since)
+
+        for i, symbol in enumerate(symbols_to_fetch):
+            data = data_list[i]
+            if data:
+                initial_prices.append(data[0][1])  # Opening price hours ago
+                current_prices.append(data[-1][4])  # Closing price now
+                symbols.append(symbol)
+
+        # Convert to CuPy arrays for GPU processing
+        initial_prices = cp.array(initial_prices, dtype=cp.float32)
+        current_prices = cp.array(current_prices, dtype=cp.float32)
+        gains = cp.zeros_like(initial_prices)
+
+        threads_per_block = 128
+        blocks_per_grid = (initial_prices.size + (threads_per_block - 1)) // threads_per_block
+        self.calculate_gains[blocks_per_grid, threads_per_block](initial_prices, current_prices, gains)
+
+        # Copy gains back to CPU from GPU
+        gains = cp.asnumpy(gains)
+
+        for i, symbol in enumerate(symbols):
+            gain = gains[i]
+            num_trades = self.exchange.fetch_trades(symbol, since=since)
+            if gain >= 2:
+                volatile_tickers.append({
+                    'symbol': symbol,
+                    'initial_price': initial_prices[i],
+                    'current_price': current_prices[i],
+                    '%change': gain,
+                    'num_trades': num_trades
+                })
+                self.initial_gains[symbol] = gain
+            elif symbol in self.initial_gains and gain < self.initial_gains[symbol] * 0.95:
+                volatile_tickers = [ticker for ticker in volatile_tickers if ticker['symbol'] != symbol]
+                del self.initial_gains[symbol]
 
         volatile_tickers.sort(key=lambda x: x['%change'], reverse=True)
         with open('volatile_tickers.csv', 'w') as f:
@@ -77,14 +122,13 @@ class SwingHigh():
     def get_position(self, symbol):
         return self.positions.get(symbol, False)
 
-    #TODO - problematic logic for last price - should be the last price of the candle. ie if the price at 12.00 is 100 and at 12.01 is 101, the last price should be 101 and not at the dt.now price
     def get_last_price(self, symbol):
         return self.exchange.fetch_ticker(symbol)['last']
-    
+
     def sell_all(self, symbol, entry_price):
         current_price = self.get_last_price(symbol)
         if self.get_position(symbol):
-            dropping_price =  entry_price * 0.995
+            dropping_price = entry_price * 0.995
             higher_than_earlier_price = entry_price * 1.015
             if current_price < dropping_price or current_price >= higher_than_earlier_price:
                 shares = self.shares_per_ticker[symbol]
@@ -94,10 +138,10 @@ class SwingHigh():
                 self.log_message(f"Selling all for {symbol} at {current_price} ")
                 self.positions[symbol] = False
 
-    def run_backtest(self):
-        volatile_tickers = self.fetch_the_volatile_cryptocurrencies(hours=24)
+    async def run_backtest(self):
+        volatile_tickers = await self.fetch_the_volatile_cryptocurrencies(hours=24)
         self.symbols = [ticker['symbol'] for ticker in volatile_tickers]
-        
+
         # Allocate 30% to the highest volatility ticker and 70% to the rest
         if volatile_tickers:
             highest_volatility_ticker = volatile_tickers[0]
@@ -113,8 +157,8 @@ class SwingHigh():
             self.positions[symbol] = True
             self.data[symbol] = []  # Initialize the data list for the symbol
             self.log_message(f"Bought {shares} coins of {symbol} at {initial_price_trading}")
-        
-        for _ in range(60):  
+
+        for _ in range(60):
             for symbol in self.symbols:
                 if self.get_position(symbol):
                     current_price = self.get_last_price(symbol)
@@ -122,7 +166,6 @@ class SwingHigh():
                     self.data[symbol].append(current_price)
                     if current_price < entry_price * 0.995 or current_price >= entry_price * 1.015:
                         self.sell_all(symbol, entry_price)
-            #time.sleep(60)  # Wait for 1 minute
 
         # Sell everything at the end of the backtest
         for symbol in self.symbols:
@@ -137,9 +180,15 @@ class SwingHigh():
         final_portfolio_value -= final_portfolio_value * self.fees  # Subtract fees
 
         self.log_message(f"Final portfolio value: {final_portfolio_value}")
+
+import nest_asyncio
+nest_asyncio.apply()
+
 if __name__ == "__main__":
+    start_time = timeit.default_timer()
     strategy = SwingHigh()
     start_time = timeit.default_timer()
-    strategy.run_backtest()
+    asyncio.run(strategy.run_backtest())
     elapsed = timeit.default_timer() - start_time
     print(f"Backtest completed in {elapsed:.2f} seconds.")
+
