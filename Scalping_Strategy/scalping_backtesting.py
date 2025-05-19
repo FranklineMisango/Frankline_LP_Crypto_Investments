@@ -903,7 +903,7 @@ class ScalpingStrategy:
 
 
 if __name__ == "__main__":
-    symbol = 'BTC/USDT'  
+    symbol = 'DEXE/USDT'  
     hkt = pytz.timezone('Asia/Hong_Kong')
     utc = pytz.utc
 
